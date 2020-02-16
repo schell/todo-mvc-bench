@@ -1,0 +1,6 @@
+# This ignores the vendor directory from being searched by source-of-truth
+searchFilePaths:
+  includeExpressions:
+    - ^.*$
+  excludeExpressions:
+    - frameworks/.*$

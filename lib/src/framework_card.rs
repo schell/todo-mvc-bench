@@ -67,6 +67,8 @@ impl Component for FrameworkCard {
     _tx: Transmitter<Self::ModelMsg>,
     rx: Receiver<Self::ViewMsg>
   ) -> GizmoBuilder {
+    // TODO: Add status badge for framework card
+    // https://getbootstrap.com/docs/4.3/components/badge/
     div()
       .class("card mb-4 shadow-sm")
       .with(

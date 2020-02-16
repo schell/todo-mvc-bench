@@ -35,11 +35,12 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 
 pub enum BenchStep {
-  Load(String),
+  Load(String, String),
   AwaitTodoInput,
   EnterTodos,
   CompleteTodos,
   DeleteTodos,
+  PushBenchmark(String),
   Done
 }
 
@@ -47,18 +48,19 @@ pub enum BenchStep {
 impl BenchStep {
   fn steps_from_card(card:&FrameworkCard) -> Vec<BenchStep> {
     vec![
-      BenchStep::Load(card.url.clone()),
+      BenchStep::Load(card.name.clone(), card.url.clone()),
       BenchStep::AwaitTodoInput,
       BenchStep::EnterTodos,
       BenchStep::CompleteTodos,
       BenchStep::DeleteTodos,
+      BenchStep::PushBenchmark(card.name.clone())
     ]
   }
 
   fn to_step_string(&self) -> String {
     match self {
-      BenchStep::Load(src) => {
-        format!("load {}", src)
+      BenchStep::Load(framework, src) => {
+        format!("load {} at {}", framework, src)
       }
       BenchStep::AwaitTodoInput => {
         "Await new-todo input".into()
@@ -72,6 +74,9 @@ impl BenchStep {
       BenchStep::DeleteTodos => {
         "Delete todos".into()
       }
+      BenchStep::PushBenchmark(framework) => {
+        format!("Enter the benchmark for {}", framework)
+      }
       BenchStep::Done => {
         "Done!".into()
       }
@@ -80,6 +85,7 @@ impl BenchStep {
 }
 
 
+#[derive(Clone)]
 pub struct Benchmark {
   pub load_started_at: f64,
   pub load_ended_at: f64,
@@ -88,7 +94,8 @@ pub struct Benchmark {
   pub todos_creation_confirmation: f64,
   pub todos_completed: f64,
   pub todos_deleted: f64,
-  pub todos_deleted_confirmation: f64
+  pub todos_deleted_confirmation: f64,
+  pub failed_message: Option<String>
 }
 
 
@@ -103,6 +110,7 @@ impl Benchmark {
       todos_completed: 0.0,
       todos_deleted: 0.0,
       todos_deleted_confirmation: 0.0,
+      failed_message: None
     }
   }
 }
@@ -114,6 +122,7 @@ pub enum In {
   ClickedStep,
   ClickedRun,
   NextStep,
+  CompleteStep,
   IframeLoaded(Document),
   TodoInputFound(Found<Element>),
   TodoInputNotFound,
@@ -138,9 +147,9 @@ pub struct App {
   iframe_document: Option<Document>,
   steps: Vec<BenchStep>,
   step_suite: Vec<Vec<BenchStep>>,
-  current_benchmark: Benchmark,
+  current_benchmark: (Option<String>, Benchmark),
   may_current_step: Option<BenchStep>,
-  _benchmarks: Vec<Benchmark>,
+  benchmarks: Vec<(String, Benchmark)>,
   may_todo_input: Option<Found<Element>>
 }
 
@@ -166,9 +175,9 @@ impl App {
       steps,
       step_suite,
       iframe_document: None,
-      current_benchmark: Benchmark::new(),
+      current_benchmark: (None, Benchmark::new()),
       may_current_step: None,
-      _benchmarks: vec![],
+      benchmarks: vec![],
       may_todo_input: None
     }
   }
@@ -212,14 +221,17 @@ impl App {
 
   fn start_step(&mut self, tx: &Transmitter<Out>, sub: &Subscriber<In>, step:BenchStep) {
     trace!("starting step: {}", step.to_step_string());
+    tx.send(&Out::StepDisabled(true));
+
     match &step {
-      BenchStep::Load(src) => {
+      BenchStep::Load(framework, src) => {
         tx.send(&Out::IframeSrc(src.clone()));
         let now =
           window()
           .performance().unwrap_throw()
           .now();
-        self.current_benchmark.load_started_at = now;
+        self.current_benchmark.0 = Some(framework.clone());
+        self.current_benchmark.1.load_started_at = now;
       }
       BenchStep::AwaitTodoInput => {
         let document =
@@ -391,12 +403,21 @@ impl App {
           }
         });
       }
+      BenchStep::PushBenchmark(framework) => {
+        self.push_benchmark(framework.clone());
+        sub.send_async(async { In::CompleteStep });
+      }
       BenchStep::Done => {
 
       }
     }
 
     self.may_current_step = Some(step);
+  }
+
+  fn push_benchmark(&mut self, framework: String) {
+    self.benchmarks.push((framework, self.current_benchmark.1.clone()));
+    self.current_benchmark = (None, Benchmark::new());
   }
 
   fn complete_current_step(
@@ -413,18 +434,42 @@ impl App {
     trace!("completed step: {}", step.to_step_string());
 
     if self.steps.is_empty() {
+      trace!("done with all steps");
       if self.step_suite.is_empty() {
+        trace!("now visualizing");
         // TODO: visualize results!
       } else {
+        trace!("getting next steps");
         let steps = self.step_suite.remove(0);
         self.steps = steps;
       }
     }
 
     self.send_next_step(tx);
+    tx.send(&Out::StepDisabled(false));
     if !self.is_stepping {
       sub.send_async(async {In::NextStep});
     }
+  }
+
+  fn fail<S:Into<String>>(
+    &mut self,
+    msg: S,
+    tx: &Transmitter<Out>,
+    sub: &Subscriber<In>
+  ) {
+    let msg = msg.into();
+    trace!("{}", msg);
+    let framework =
+      self
+      .current_benchmark
+      .0
+      .take()
+      .expect("could not get framework name");
+    self.current_benchmark.1.failed_message = Some(msg);
+    self.push_benchmark(framework);
+    self.steps = vec![];
+    self.complete_current_step(tx, sub);
   }
 }
 
@@ -432,7 +477,8 @@ impl App {
 #[derive(Clone)]
 pub enum Out {
   IframeSrc(String),
-  NextStep(String)
+  NextStep(String),
+  StepDisabled(bool)
 }
 
 
@@ -455,6 +501,13 @@ impl Out {
     }
   }
 
+  fn step_disabled(&self) -> Option<bool> {
+    if let Out::StepDisabled(is_disabled) = self {
+      Some(*is_disabled)
+    } else {
+      None
+    }
+  }
 }
 
 
@@ -479,6 +532,9 @@ impl Component for App {
       In::NextStep => {
         self.step(tx, sub);
       }
+      In::CompleteStep => {
+        self.complete_current_step(tx, sub);
+      }
       In::ClickedRun => {
         self.is_stepping = false;
         self.step(tx, sub);
@@ -491,10 +547,10 @@ impl Component for App {
             .performance().unwrap_throw()
             .now();
 
-          self.current_benchmark.load_ended_at = now;
+          self.current_benchmark.1.load_ended_at = now;
           trace!(
             "initial load: {}millis",
-            self.current_benchmark.load_ended_at - self.current_benchmark.load_started_at
+            self.current_benchmark.1.load_ended_at - self.current_benchmark.1.load_started_at
           );
 
           self.iframe_document = Some(doc.clone());
@@ -502,7 +558,7 @@ impl Component for App {
         }
       }
       In::TodoInputFound(found_todo_input) => {
-        self.current_benchmark.await_todo_time =
+        self.current_benchmark.1.await_todo_time =
           found_todo_input.elapsed;
         trace!("await todo input: {}millis", found_todo_input.elapsed);
 
@@ -510,38 +566,34 @@ impl Component for App {
         self.complete_current_step(tx, sub);
       }
       In::TodoInputNotFound => {
-        trace!("todo input not found!");
-        // TODO: Mark current framework card as erred.
+        self.fail("todo input not found!", tx, sub);
       }
       In::TodosCreated{ time_to_create, time_to_confirm } => {
         trace!("time to create:  {}millis", time_to_create);
         trace!("time to confirm: {}millis", time_to_confirm);
-        self.current_benchmark.todos_creation = *time_to_create;
-        self.current_benchmark.todos_creation_confirmation = *time_to_confirm;
+        self.current_benchmark.1.todos_creation = *time_to_create;
+        self.current_benchmark.1.todos_creation_confirmation = *time_to_confirm;
         self.complete_current_step(tx, sub);
       }
       In::TodosNotCreated => {
-        trace!("todos could not be created!");
-        // TODO: Mark current framework card as erred.
+        self.fail("todos could not be created", tx, sub);
       }
       In::TodosCompleted(elapsed) => {
         trace!("time to complete: {}millis", elapsed);
         self.complete_current_step(tx, sub);
       }
       In::TodosNotCompleted => {
-        trace!("todos could not be completed!");
-        // TODO: Mark current framework card as erred.
+        self.fail("todos could not be completed", tx, sub);
       }
       In::TodosDeleted{ time_to_delete, time_to_confirm } => {
         trace!("time to delete:  {}millis", time_to_delete);
         trace!("time to confirm: {}millis", time_to_confirm);
-        self.current_benchmark.todos_deleted = *time_to_delete;
-        self.current_benchmark.todos_deleted_confirmation = *time_to_confirm;
+        self.current_benchmark.1.todos_deleted = *time_to_delete;
+        self.current_benchmark.1.todos_deleted_confirmation = *time_to_confirm;
         self.complete_current_step(tx, sub);
       }
       In::TodosNotDeleted => {
-        trace!("todos could not be deleted!");
-        // TODO: Mark current framework card as erred.
+        self.fail("todos could not be deleted", tx, sub);
       }
     }
   }
@@ -587,8 +639,13 @@ impl Component for App {
         .with(
           button()
             .id("step_button")
-            .class("btn btn-outline-primary mr-1")
+            .class("btn btn-secondary mr-1")
             .text("Step")
+            .rx_boolean_attribute(
+              "disabled",
+              false,
+              rx.branch_filter_map(|msg| msg.step_disabled())
+            )
             .tx_on("click", tx.contra_map(|_| In::ClickedStep))
         )
         .with(

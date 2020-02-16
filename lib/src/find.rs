@@ -6,39 +6,45 @@ use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::UnwrapThrowExt;
-use web_sys::Element;
-use mogwai::utils::{document, timeout, window};
+use mogwai::utils::{timeout, window};
 
 
 #[derive(Clone)]
-pub struct FoundElement {
-  pub element: Element,
-  pub elapsed: u32
+pub struct Found<T> {
+  pub found: T,
+  pub elapsed: f64
 }
 
 
-pub struct ElementFuture {
-  id: String,
+pub struct FoundFuture<T> {
+  op: Box<dyn Fn() -> Option<T>>,
   timeout: u32,
   poll_count: u64,
   start: f64,
 }
 
 
-impl ElementFuture {
-  pub fn new(id: String, timeout: u32) -> Self {
-    ElementFuture {
-      id,
+impl<T> FoundFuture<T> {
+  pub fn new<F>(timeout: u32, f:F) -> Self
+  where
+    F: Fn() -> Option<T> + 'static
+  {
+    FoundFuture {
+      op: Box::new(f),
       timeout,
       poll_count: 0,
       start: 0.0
     }
   }
+
+  pub fn run(&self) -> Option<T> {
+    (self.op)()
+  }
 }
 
 
-impl Future for ElementFuture {
-  type Output = Option<FoundElement>;
+impl<T> Future for FoundFuture<T> {
+  type Output = Option<Found<T>>;
 
   fn poll(self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Self::Output> {
     println!("polling");
@@ -56,15 +62,12 @@ impl Future for ElementFuture {
     }
     future.poll_count += 1;
 
-    // Look for the element
-    let may_element:Option<Element> =
-      document()
-      .get_element_by_id(&future.id);
-
+    // Look for the thing
+    let may_stuff:Option<T> = future.run();
     let elapsed = now - future.start;
     let elapsed_millis = elapsed.round() as u32;
 
-    if may_element.is_none() && elapsed_millis <= future.timeout {
+    if may_stuff.is_none() && elapsed_millis <= future.timeout {
       // Set a timeout to wake this future on the next JS frame...
       let waker =
         Arc::new(Mutex::new(Some(
@@ -88,17 +91,17 @@ impl Future for ElementFuture {
       });
 
       Poll::Pending
-    } else if may_element.is_some() {
-      let element = may_element.unwrap_throw();
+    } else if may_stuff.is_some() {
+      let found = may_stuff.unwrap_throw();
       let now =
         window()
         .performance()
         .expect("no performance object")
         .now();
 
-      Poll::Ready(Some(FoundElement {
-        elapsed: (now - future.start).round() as u32,
-        element
+      Poll::Ready(Some(Found {
+        elapsed: now - future.start,
+        found
       }))
     } else {
       Poll::Ready(None)

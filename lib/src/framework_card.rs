@@ -1,6 +1,6 @@
 use mogwai::prelude::*;
 
-
+// TODO: Allow disabling
 pub struct FrameworkCard {
   pub name: String,
   pub version: String,
@@ -122,4 +122,55 @@ impl Component for FrameworkCard {
           )
       )
   }
+}
+
+
+pub fn all_cards() -> Vec<FrameworkCard> {
+  vec![
+    FrameworkCard::new(
+      "mogwai",
+      "0.1.5",
+      "rust",
+      "frameworks/mogwai/index.html",
+      &[
+        ("has vdom", false),
+        ("is elm like", true)
+      ],
+      true
+    ),
+    FrameworkCard::new(
+      "sauron",
+      "0.20.1",
+      "rust",
+      "frameworks/sauron/index.html",
+      &[
+        ("has vdom", true),
+        ("is elm like", true)
+      ],
+      true
+    ),
+    FrameworkCard::new(
+      "yew",
+      "0.10.0",
+      "rust",
+      "frameworks/yew-0.10/index.html",
+      &[
+        ("has vdom", true),
+        ("is elm like", true)
+      ],
+      true
+    ),
+    FrameworkCard::new(
+      "Backbone",
+      "1.1.2",
+      "javascript",
+      "frameworks/backbone/index.html",
+      &[
+        ("has vdom", false),
+        ("is elm like", false)
+      ],
+      true
+    ),
+
+  ]
 }

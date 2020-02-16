@@ -42,7 +42,9 @@ path = "../mogwai/mogwai"
 version = "0.3"
 # Add more web-sys API's as you need them
 features = [
+  "HtmlIFrameElement",
   "HtmlInputElement",
+  "NodeList",
   "Performance"
 ]
 

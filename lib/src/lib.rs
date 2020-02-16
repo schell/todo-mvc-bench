@@ -1,11 +1,15 @@
 pub mod find;
 pub mod framework_card;
 
-use find::{ElementFuture, FoundElement};
+use find::{FoundFuture, Found};
 
 
-pub async fn wait_for_element(id: &str, millis: u32) -> Option<FoundElement> {
-  let id:String = id.into();
-  let may_future = ElementFuture::new(id, millis);
-  may_future.await
+pub async fn wait_for<T, F>(
+  millis: u32,
+  f:F
+) -> Option<Found<T>>
+where
+  F: Fn() -> Option<T> + 'static
+{
+  FoundFuture::new(millis, f).await
 }

@@ -1,4 +1,72 @@
+use log::trace;
 use mogwai::prelude::*;
+use web_sys::{Event, Document, KeyboardEvent, KeyboardEventInit};
+
+
+#[derive(Clone, Debug)]
+pub enum FrameworkState {
+  Ready,
+  Erred(String)
+}
+
+
+#[derive(Clone)]
+pub enum CreateTodoMethod {
+  Change,
+  Keydown,
+  Keypress
+}
+
+
+impl CreateTodoMethod {
+  pub fn create_event(&self, document: &Document) -> Event {
+
+    let event =
+      match self {
+        CreateTodoMethod::Change => {
+          let event =
+            document
+            .create_event("Event")
+            .expect("could not create change event");
+          event.init_event_with_bubbles_and_cancelable("change", true, true);
+          event
+        }
+        CreateTodoMethod::Keydown => {
+          let mut init = KeyboardEventInit::new();
+          init.bubbles(true);
+          init.cancelable(true);
+          init.which(13);
+          let event =
+            KeyboardEvent::new_with_keyboard_event_init_dict(
+              "keydown",
+              &init
+            )
+            .expect("could not create keyboard event");
+          event
+            .dyn_into::<Event>()
+            .expect("could not cast keyboard event")
+        }
+        CreateTodoMethod::Keypress => {
+          let mut init = KeyboardEventInit::new();
+          init.bubbles(true);
+          init.cancelable(true);
+          init.which(13);
+          let event =
+            KeyboardEvent::new_with_keyboard_event_init_dict(
+              "keypress",
+              &init
+            )
+            .expect("could not create keyboard event");
+          event
+            .dyn_into::<Event>()
+            .expect("could not cast keyboard event")
+        }
+      };
+
+    event
+  }
+}
+
 
 // TODO: Allow disabling
 pub struct FrameworkCard {
@@ -7,7 +75,9 @@ pub struct FrameworkCard {
   pub language: String,
   pub url: String,
   pub attributes: Vec<(String, bool)>,
-  pub is_enabled: bool
+  pub is_enabled: bool,
+  pub state: FrameworkState,
+  pub create_todo_method: CreateTodoMethod
 }
 
 
@@ -18,7 +88,8 @@ impl FrameworkCard {
     language: &str,
     url: &str,
     attributes: &[(&str, bool)],
-    is_enabled: bool
+    is_enabled: bool,
+    create_todo_method: CreateTodoMethod,
   ) -> Self {
     let attributes =
       attributes
@@ -32,7 +103,9 @@ impl FrameworkCard {
       language: language.into(),
       url: url.into(),
       attributes,
-      is_enabled
+      is_enabled,
+      state: FrameworkState::Ready,
+      create_todo_method
     }
   }
 }
@@ -40,12 +113,24 @@ impl FrameworkCard {
 
 #[derive(Clone)]
 pub enum In {
-
+  ChangeState(FrameworkState)
 }
+
 
 #[derive(Clone)]
 pub enum Out {
+  ChangeState(FrameworkState)
+}
 
+
+impl Out {
+  fn error_state_msg(&self) -> Option<Option<String>> {
+    if let Out::ChangeState(FrameworkState::Erred(msg)) = self {
+      Some(Some(msg.clone()))
+    } else {
+      None
+    }
+  }
 }
 
 
@@ -55,11 +140,17 @@ impl Component for FrameworkCard {
 
   fn update(
     &mut self,
-    _msg: &Self::ModelMsg,
-    _tx: &Transmitter<Self::ViewMsg>,
+    msg: &Self::ModelMsg,
+    tx: &Transmitter<Self::ViewMsg>,
     _sub: &Subscriber<Self::ModelMsg>
   ) {
-
+    match msg {
+      In::ChangeState(st) => {
+        trace!("{} state change to {:?}", self.name, st);
+        tx.send(&Out::ChangeState(st.clone()));
+        self.state = st.clone();
+      }
+    }
   }
 
   fn builder(
@@ -94,7 +185,7 @@ impl Component for FrameworkCard {
           )
           .with(
             dl()
-              .class("list-unstyled mt-3 mb-4")
+              .class("row list-unstyled mt-3 mb-4")
               .with_many(
                 self
                   .attributes
@@ -108,12 +199,26 @@ impl Component for FrameworkCard {
                       };
                     vec![
                       dt()
+                        .class("col-sm-6")
                         .text(attr),
                       dd()
+                        .class("col-sm-6")
                         .text(val_str)
                     ]
                   })
                   .collect::<Vec<_>>()
+              )
+              .with(
+                dd()
+                  .class("col-sm-12")
+                  .rx_text(
+                    "...",
+                    rx.branch_filter_map(|msg| {
+                      msg
+                        .error_state_msg()
+                        .map(|may_err| may_err.unwrap_or("...".to_string()))
+                    })
+                  )
               )
           )
           .with(
@@ -138,7 +243,8 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", false),
         ("is elm like", true)
       ],
-      true
+      true,
+      CreateTodoMethod::Change
     ),
     FrameworkCard::new(
       "sauron",
@@ -149,7 +255,8 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", true),
         ("is elm like", true)
       ],
-      true
+      true,
+      CreateTodoMethod::Keypress
     ),
     FrameworkCard::new(
       "yew",
@@ -160,7 +267,8 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", true),
         ("is elm like", true)
       ],
-      true
+      true,
+      CreateTodoMethod::Keypress
     ),
     FrameworkCard::new(
       "Backbone",
@@ -171,7 +279,8 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", false),
         ("is elm like", false)
       ],
-      true
+      true,
+      CreateTodoMethod::Keypress
     ),
 
   ]

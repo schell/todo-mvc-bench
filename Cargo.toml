@@ -44,6 +44,8 @@ version = "0.3"
 features = [
   "HtmlIFrameElement",
   "HtmlInputElement",
+  "KeyboardEvent",
+  "KeyboardEventInit",
   "NodeList",
   "Performance"
 ]

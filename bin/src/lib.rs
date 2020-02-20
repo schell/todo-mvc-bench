@@ -20,9 +20,11 @@ use web_sys::{
 use todo_mvc_bench_lib::{
   wait_for,
   find::Found,
+  framework_card as framework_card,
   framework_card::{
     all_cards,
-    FrameworkCard
+    FrameworkCard,
+    FrameworkState,
   }
 };
 
@@ -150,7 +152,8 @@ pub struct App {
   current_benchmark: (Option<String>, Benchmark),
   may_current_step: Option<BenchStep>,
   benchmarks: Vec<(String, Benchmark)>,
-  may_todo_input: Option<Found<Element>>
+  may_todo_input: Option<Found<Element>>,
+  framework_index: Option<usize>
 }
 
 
@@ -178,7 +181,8 @@ impl App {
       current_benchmark: (None, Benchmark::new()),
       may_current_step: None,
       benchmarks: vec![],
-      may_todo_input: None
+      may_todo_input: None,
+      framework_index: None
     }
   }
 
@@ -187,6 +191,10 @@ impl App {
   }
 
   fn step(&mut self, tx: &Transmitter<Out>, sub: &Subscriber<In>) {
+    if self.framework_index.is_none() {
+      self.framework_index = Some(0);
+    }
+
     let has_step =
       self
       .next_step()
@@ -266,6 +274,16 @@ impl App {
           .focus()
           .expect("could not focus input");
         let document = self.get_iframe_document();
+        let framework_index =
+          self
+          .framework_index
+          .expect("no framework index");
+        let create_todo_method =
+          self
+          .cards
+          .get(framework_index)
+          .expect("could not get framework")
+          .with_state(|card| card.create_todo_method.clone());
         sub.send_async(async move {
           let perf =
             window()
@@ -274,11 +292,7 @@ impl App {
           let start = perf.now();
           for i in 0 ..= 99 {
             input.set_value(&format!("Something to do {}", i));
-            let event =
-              document
-              .create_event("Event")
-              .expect("could not create change event");
-            event.init_event_with_bubbles_and_cancelable("change", true, true);
+            let event = create_todo_method.create_event(&document);
             input
               .dispatch_event(&event)
               .expect("could not dispatch event");
@@ -437,11 +451,16 @@ impl App {
       trace!("done with all steps");
       if self.step_suite.is_empty() {
         trace!("now visualizing");
+        self.framework_index = None;
         // TODO: visualize results!
       } else {
         trace!("getting next steps");
         let steps = self.step_suite.remove(0);
         self.steps = steps;
+        self
+          .framework_index
+          .iter_mut()
+          .for_each(|n| *n = *n+1);
       }
     }
 
@@ -466,7 +485,13 @@ impl App {
       .0
       .take()
       .expect("could not get framework name");
-    self.current_benchmark.1.failed_message = Some(msg);
+    self.current_benchmark.1.failed_message = Some(msg.clone());
+    'find_framework: for card in self.cards.iter_mut() {
+      if card.with_state(|c| c.name == framework) {
+        card.update(&framework_card::In::ChangeState(FrameworkState::Erred(msg)));
+        break 'find_framework;
+      }
+    }
     self.push_benchmark(framework);
     self.steps = vec![];
     self.complete_current_step(tx, sub);

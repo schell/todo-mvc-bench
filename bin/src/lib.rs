@@ -115,6 +115,18 @@ impl Benchmark {
       failed_message: None
     }
   }
+
+  pub fn total(&self) -> f64 {
+    let mut total = 0.0;
+    total += self.load_ended_at - self.load_started_at;
+    total += self.await_todo_time;
+    total += self.todos_creation;
+    total += self.todos_creation_confirmation;
+    total += self.todos_completed;
+    total += self.todos_deleted;
+    total += self.todos_deleted_confirmation;
+    total
+  }
 }
 
 
@@ -139,7 +151,7 @@ pub enum In {
     time_to_delete: f64,
     time_to_confirm: f64
   },
-  TodosNotDeleted,
+  TodosNotDeleted(String),
 }
 
 
@@ -148,7 +160,6 @@ pub struct App {
   cards: Vec<GizmoComponent<FrameworkCard>>,
   iframe_document: Option<Document>,
   steps: Vec<BenchStep>,
-  step_suite: Vec<Vec<BenchStep>>,
   current_benchmark: (Option<String>, Benchmark),
   may_current_step: Option<BenchStep>,
   benchmarks: Vec<(String, Benchmark)>,
@@ -159,24 +170,21 @@ pub struct App {
 
 impl App {
   pub fn new() -> Self {
-    let (mut step_suite, mut cards):(Vec<_>, Vec<_>) =
+    let mut cards =
       all_cards()
       .into_iter()
-      .map(|card| (BenchStep::steps_from_card(&card), card.into_component()))
-      .unzip();
+      .map(|card | card.into_component())
+      .collect::<Vec<_>>();
     cards
       .iter_mut()
       .for_each(|card| {
         card.build();
       });
 
-    let steps = step_suite.remove(0);
-
     App {
       is_stepping: false,
       cards,
-      steps,
-      step_suite,
+      steps: vec![],
       iframe_document: None,
       current_benchmark: (None, Benchmark::new()),
       may_current_step: None,
@@ -186,18 +194,46 @@ impl App {
     }
   }
 
-  fn next_step(&self) -> Option<&BenchStep> {
-    self.steps.first()
+  fn get_next_steps(&mut self) {
+    if let Some(index) = self.framework_index.as_mut() {
+      *index += 1;
+    } else {
+      self.framework_index = Some(0);
+    }
+
+    let mut may_card = None;
+    let start_ndx = self.framework_index.unwrap_throw();
+    'find_card: for index in start_ndx .. self.cards.len() {
+      trace!("finding next framework at index: {}", index);
+      let card =
+        self
+        .cards
+        .get(index)
+        .unwrap_throw()
+        .with_state(|c| c.clone());
+      self.framework_index = Some(index);
+      if card.is_enabled {
+        may_card = Some(card);
+        break 'find_card;
+      }
+    }
+
+    self.steps =
+      may_card
+      .as_ref()
+      .map(|card| BenchStep::steps_from_card(card))
+      .unwrap_or(vec![]);
   }
 
   fn step(&mut self, tx: &Transmitter<Out>, sub: &Subscriber<In>) {
     if self.framework_index.is_none() {
-      self.framework_index = Some(0);
+      self.get_next_steps();
     }
 
     let has_step =
       self
-      .next_step()
+      .steps
+      .first()
       .is_some();
     if has_step {
       let step =
@@ -210,12 +246,12 @@ impl App {
   }
 
   fn send_next_step(&self, tx: &Transmitter<Out>) {
-    let step =
+    let step_str =
       self
-      .next_step()
-      .unwrap_or(&BenchStep::Done)
-      .clone();
-    let step_str = step.to_step_string();
+      .steps
+      .first()
+      .map(|step| step.to_step_string())
+      .unwrap_or("...".into());
     tx.send(&Out::NextStep(step_str));
   }
 
@@ -292,10 +328,7 @@ impl App {
           let start = perf.now();
           for i in 0 ..= 99 {
             input.set_value(&format!("Something to do {}", i));
-            let event = create_todo_method.create_event(&document);
-            input
-              .dispatch_event(&event)
-              .expect("could not dispatch event");
+            create_todo_method.dispatch_events(&document, &input);
           }
           let end = perf.now();
           let found = wait_for(
@@ -370,23 +403,23 @@ impl App {
                 .query_selector_all(".destroy")
                 .ok()
                 .map(|list| {
-                  for i in 0..list.length() {
+                  if list.length() == 0 {
+                    Some(())
+                  } else {
                     let el =
                       list
-                      .get(i)
+                      .get(0)
                       .expect("could not get todo destroy button")
                       .dyn_into::<HtmlElement>()
                       .expect("could not cast todo destroy button");
                     el.click();
-                  }
-                  if list.length() == 100 {
-                    Some(())
-                  } else {
                     None
                   }
                 })
+                .flatten()
             }
           ).await;
+
           if let Some(Found{elapsed:time_to_delete, ..}) = found {
             let found = wait_for(
               5000,
@@ -410,15 +443,23 @@ impl App {
                 time_to_confirm
               }
             } else {
-              In::TodosNotDeleted
+              In::TodosNotDeleted("cannot confirm deletion".into())
             }
           } else {
-            In::TodosNotDeleted
+            In::TodosNotDeleted("todo destroy buttons not found".into())
           }
         });
       }
       BenchStep::PushBenchmark(framework) => {
-        self.push_benchmark(framework.clone());
+        let bench = self.push_benchmark(framework.clone()).clone();
+        let index = self.framework_index.expect("no framework index");
+        let card =
+          self
+          .cards
+          .get_mut(index)
+          .expect("no framework card");
+        let total = format!("total: {}ms", bench.total());
+        card.update(&framework_card::In::ChangeState(FrameworkState::Done(total)));
         sub.send_async(async { In::CompleteStep });
       }
       BenchStep::Done => {
@@ -429,9 +470,14 @@ impl App {
     self.may_current_step = Some(step);
   }
 
-  fn push_benchmark(&mut self, framework: String) {
+  fn push_benchmark(&mut self, framework: String) -> &Benchmark {
     self.benchmarks.push((framework, self.current_benchmark.1.clone()));
     self.current_benchmark = (None, Benchmark::new());
+    &self
+      .benchmarks
+      .last()
+      .expect("no benchmark")
+      .1
   }
 
   fn complete_current_step(
@@ -449,18 +495,11 @@ impl App {
 
     if self.steps.is_empty() {
       trace!("done with all steps");
-      if self.step_suite.is_empty() {
+      self.get_next_steps();
+      if self.steps.is_empty() {
         trace!("now visualizing");
         self.framework_index = None;
-        // TODO: visualize results!
-      } else {
-        trace!("getting next steps");
-        let steps = self.step_suite.remove(0);
-        self.steps = steps;
-        self
-          .framework_index
-          .iter_mut()
-          .for_each(|n| *n = *n+1);
+        self.is_stepping = true;
       }
     }
 
@@ -617,8 +656,8 @@ impl Component for App {
         self.current_benchmark.1.todos_deleted_confirmation = *time_to_confirm;
         self.complete_current_step(tx, sub);
       }
-      In::TodosNotDeleted => {
-        self.fail("todos could not be deleted", tx, sub);
+      In::TodosNotDeleted(msg) => {
+        self.fail(&format!("todos could not be deleted: {}", msg), tx, sub);
       }
     }
   }

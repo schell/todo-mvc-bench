@@ -13,3 +13,9 @@ where
 {
   FoundFuture::new(millis, f).await
 }
+
+
+pub async fn wait(millis: u32) {
+  let _done:Option<Found<()>> = wait_for(millis, || { None }).await;
+  ()
+}

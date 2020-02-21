@@ -47,7 +47,6 @@ impl<T> Future for FoundFuture<T> {
   type Output = Option<Found<T>>;
 
   fn poll(self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Self::Output> {
-    println!("polling");
     let now =
       window()
       .performance()

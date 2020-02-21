@@ -42,7 +42,10 @@ version = "0.3"
 # Add more web-sys API's as you need them
 features = [
   "HtmlInputElement",
-  "Performance"
+  "HtmlFormElement",
+  "Performance",
+  "KeyboardEvent",
+  "KeyboardEventInit",
 ]
 
 [dev-dependencies]

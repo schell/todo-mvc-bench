@@ -372,6 +372,17 @@ pub fn all_cards() -> Vec<FrameworkCard> {
       CreateTodoMethod::InputAndKeypress
     ),
     FrameworkCard::new(
+      "Mithril2",
+      "frameworks/mithril-2/index.html",
+      &[
+        ("language", "javascript"),
+        ("version", "2.0.4"),
+        ("has vdom", "yes"),
+      ],
+      true,
+      CreateTodoMethod::InputAndKeypress
+    ),
+    FrameworkCard::new(
       "Elm",
       "frameworks/elm17/index.html",
       &[

@@ -1,27 +1,18 @@
-extern crate log;
-extern crate console_log;
-extern crate console_error_panic_hook;
-extern crate mogwai;
-extern crate serde;
-extern crate serde_json;
-extern crate todo_mvc_bench_lib;
-
 use log::{Level,trace};
 use mogwai::prelude::*;
 use std::panic;
 use wasm_bindgen::prelude::*;
 
-use todo_mvc_bench_lib::{
-  framework_card as framework_card,
-  framework_card::{
+mod bench_runner;
+use bench_runner::{Benchmark, BenchRunner};
+
+mod framework_card;
+use framework_card::{
     all_cards,
     FrameworkCard,
     FrameworkState,
-  }
 };
 
-mod bench_runner;
-use bench_runner::{Benchmark, BenchRunner};
 
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -98,7 +89,7 @@ impl App {
     }
   }
 
-  fn get_next_framework_url(&mut self) -> Option<String> {
+  fn get_next_framework(&mut self) -> Option<FrameworkCard> {
     self.increment_framework_index();
     if self.framework_index.is_none() {
       return None;
@@ -117,7 +108,7 @@ impl App {
         .with_state(|c| c.clone());
       self.framework_index = Some(index);
       if card.is_enabled {
-        return Some(card.url);
+        return Some(card.clone());
       }
     }
     None
@@ -181,16 +172,29 @@ impl Component for App {
             _ => { None }
           }
         });
-        if let Some(url) = self.get_next_framework_url() {
-          self.bench_runner.update(&bench_runner::In::InitBench(url));
-        }
       }
       In::ClickedStep => {
         self.is_stepping = true;
+        if !self.bench_runner.with_state(|b| b.has_steps()) {
+          if let Some(framework) = self.get_next_framework() {
+            self.bench_runner.update(&bench_runner::In::InitBench(
+              framework.url,
+              framework.create_todo_method
+            ));
+          }
+        }
         self.bench_runner.update(&bench_runner::In::Step);
       }
       In::ClickedRun => {
         self.is_stepping = false;
+        if !self.bench_runner.with_state(|b| b.has_steps()) {
+          if let Some(framework) = self.get_next_framework() {
+            self.bench_runner.update(&bench_runner::In::InitBench(
+              framework.url,
+              framework.create_todo_method
+            ));
+          }
+        }
         self.bench_runner.update(&bench_runner::In::Step);
       }
       In::StepDisabled(is_disabled) => {
@@ -210,15 +214,17 @@ impl Component for App {
         card.update(&framework_card::In::ChangeState(FrameworkState::Erred(msg)));
       }
       In::SuiteCompleted(benchmark) => {
-        let _card = self.push_benchmark(benchmark.clone());
-        if let Some(url) = self.get_next_framework_url() {
-          self.bench_runner.update(&bench_runner::In::InitBench(url));
+        let _component_card = self.push_benchmark(benchmark.clone());
+        if let Some(framework) = self.get_next_framework() {
+          self.bench_runner.update(&bench_runner::In::InitBench(
+            framework.url,
+            framework.create_todo_method
+          ));
           if !self.is_stepping {
             self.bench_runner.update(&bench_runner::In::Step);
           }
         } else {
           trace!("done.");
-          // Done!
         }
       }
     }

@@ -1,11 +1,3 @@
-extern crate log;
-extern crate console_log;
-extern crate console_error_panic_hook;
-extern crate mogwai;
-extern crate serde;
-extern crate serde_json;
-extern crate todo_mvc_bench_lib;
-
 use log::{error, trace};
 use mogwai::prelude::*;
 use web_sys::{
@@ -16,10 +8,9 @@ use todo_mvc_bench_lib::{
   wait_for,
   find::Found,
   async_event::{EventResult, wait_for_event_on},
-  framework_card::{
-    CreateTodoMethod,
-  }
 };
+
+use super::framework_card::CreateTodoMethod;
 
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -115,7 +106,7 @@ impl Benchmark {
 #[derive(Clone)]
 pub enum In {
   Iframe(HtmlIFrameElement),
-  InitBench(String),
+  InitBench(String, CreateTodoMethod),
   // Step through one benchmark
   Step,
   StepCompleted(StepRunner),
@@ -179,7 +170,7 @@ impl StepRunner {
         BenchStep::AwaitTodoInput => {
           let may_input = wait_for(
             1000,
-            move || document.get_element_by_id("new-todo")
+            move || document.query_selector("#new-todo").ok().flatten()
           ).await;
 
           if let Some(Found{elapsed, found: input}) = may_input {
@@ -191,6 +182,7 @@ impl StepRunner {
                 .dyn_into::<HtmlInputElement>()
                 .expect("is not an input")
             );
+
             None
           } else {
             Some("todo input not found!".into())
@@ -369,6 +361,10 @@ impl BenchRunner {
       step_runner: None
     }
   }
+
+  pub fn has_steps(&self) -> bool {
+    self.steps.len() > 0
+  }
 }
 
 
@@ -386,9 +382,12 @@ impl Component for BenchRunner {
       In::Iframe(iframe) => {
         self.iframe = Some(iframe.clone());
       }
-      In::InitBench(url) => {
+
+      In::InitBench(url, create_todo_method) => {
         self.steps = BenchStep::steps(url);
+        self.create_todo_method = create_todo_method.clone();
       }
+
       In::Step => {
         let iframe =
           self
@@ -408,6 +407,7 @@ impl Component for BenchRunner {
               benchmark: Benchmark::new()
             }
           );
+        step_runner.create_todo_method = self.create_todo_method.clone();
 
         if !self.steps.is_empty() {
           let step = self.steps.remove(0);
@@ -419,6 +419,7 @@ impl Component for BenchRunner {
           });
         }
       }
+
       In::StepCompleted(runner) => {
         if runner.benchmark.failed_message.is_some() {
           self.steps = vec![];

@@ -11,7 +11,7 @@ pub enum FrameworkState {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum CreateTodoMethod {
   Change,
   Keydown,
@@ -35,6 +35,7 @@ impl CreateTodoMethod {
         .dispatch_event(&event)
         .expect("could not dispatch event");
     };
+
     let keyboard_enter_event = |name:&str, from: &HtmlElement| {
       let mut init = KeyboardEventInit::new();
       init.bubbles(true);
@@ -295,17 +296,6 @@ impl Component for FrameworkCard {
 pub fn all_cards() -> Vec<FrameworkCard> {
   vec![
     FrameworkCard::new(
-      "mogwai",
-      "frameworks/mogwai/index.html",
-      &[
-        ("language", "rust"),
-        ("version", "0.1.5"),
-        ("has vdom", "no"),
-      ],
-      true,
-      CreateTodoMethod::Change
-    ),
-    FrameworkCard::new(
       "sauron",
       "frameworks/sauron/index.html",
       &[
@@ -315,6 +305,17 @@ pub fn all_cards() -> Vec<FrameworkCard> {
       ],
       true,
       CreateTodoMethod::InputAndKeypress
+    ),
+    FrameworkCard::new(
+      "mogwai",
+      "frameworks/mogwai/index.html",
+      &[
+        ("language", "rust"),
+        ("version", "0.1.5"),
+        ("has vdom", "no"),
+      ],
+      true,
+      CreateTodoMethod::Change
     ),
     FrameworkCard::new(
       "yew",
@@ -336,7 +337,7 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", "no"),
       ],
       true,
-      CreateTodoMethod::Keypress
+      CreateTodoMethod::InputAndKeypress
     ),
     FrameworkCard::new(
       "Ember",

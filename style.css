@@ -39,3 +39,7 @@ html {
     border-radius: 1em;
     border: 1px dashed #333 !important;
 }
+
+.framework-text {
+    font: 12px monospace;
+}

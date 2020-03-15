@@ -1,5 +1,6 @@
 use log::{error, trace};
 use mogwai::prelude::*;
+use serde::{Serialize, Deserialize};
 use web_sys::{
   HtmlIFrameElement
 };
@@ -20,6 +21,7 @@ use super::framework_card::CreateTodoMethod;
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 
+#[derive(Serialize, Deserialize)]
 pub enum BenchStep {
   Load(String),
   AwaitTodoInput,
@@ -62,7 +64,7 @@ impl BenchStep {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Benchmark {
   pub load: f64,
   pub await_todo_time: f64,
@@ -371,6 +373,7 @@ impl BenchRunner {
 impl Component for BenchRunner {
   type ModelMsg = In;
   type ViewMsg = Out;
+  type DomNode = HtmlElement;
 
   fn update(
     &mut self,
@@ -436,11 +439,11 @@ impl Component for BenchRunner {
     }
   }
 
-  fn builder(
+  fn view(
     &self,
     tx: Transmitter<Self::ModelMsg>,
     rx: Receiver<Self::ViewMsg>
-  ) -> GizmoBuilder {
+  ) -> Gizmo<HtmlElement> {
     iframe()
       .class("todo-src embed-responsive-item")
       .rx_attribute(

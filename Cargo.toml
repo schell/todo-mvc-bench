@@ -49,7 +49,10 @@ features = [
   "KeyboardEvent",
   "KeyboardEventInit",
   "NodeList",
-  "Performance"
+  "Performance",
+  "Storage",
+  "SvgsvgElement",
+  "SvgTextContentElement",
 ]
 
 [dev-dependencies]

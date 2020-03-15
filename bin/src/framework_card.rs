@@ -7,7 +7,6 @@ use web_sys::{Event, Document, KeyboardEvent, KeyboardEventInit};
 pub enum FrameworkState {
   Ready,
   Erred(String),
-  Done(String)
 }
 
 
@@ -150,20 +149,13 @@ impl Out {
       None
     }
   }
-
-  fn done_state_msg(&self) -> Option<Option<String>> {
-    if let Out::ChangeState(FrameworkState::Done(msg)) = self {
-      Some(Some(msg.clone()))
-    } else {
-      None
-    }
-  }
 }
 
 
 impl Component for FrameworkCard {
   type ModelMsg = In;
   type ViewMsg = Out;
+  type DomNode = HtmlElement;
 
   fn update(
     &mut self,
@@ -184,11 +176,11 @@ impl Component for FrameworkCard {
     }
   }
 
-  fn builder(
+  fn view(
     &self,
     tx: Transmitter<Self::ModelMsg>,
     rx: Receiver<Self::ViewMsg>
-  ) -> GizmoBuilder {
+  ) -> Gizmo<HtmlElement> {
     // TODO: Add status badge for framework card
     // https://getbootstrap.com/docs/4.3/components/badge/
     div()
@@ -210,49 +202,33 @@ impl Component for FrameworkCard {
         div()
           .class("card-body")
           .with(
-            dl()
-              .class("row list-unstyled mt-3 mb-4")
-              .with_many(
-                self
-                  .attributes
-                  .iter()
-                  .flat_map(|(attr, val)| {
-                    vec![
-                      dt()
-                        .class("col-sm-6")
-                        .text(attr),
-                      dd()
-                        .class("col-sm-6")
-                        .text(val)
-                    ]
+            {
+              let mut dl = dl().class("row list-unstyled mt-3 mb-4");
+              for (attr, val) in self.attributes.iter() {
+                let dt =
+                  dt()
+                  .class("col-sm-6")
+                  .text(attr);
+                let dd =
+                  dd()
+                  .class("col-sm-6")
+                  .text(val);
+                dl = dl.with(dt).with(dd);
+              }
+              dl
+            }
+            .with(
+              dd()
+                .class("col-sm-12")
+                .rx_text(
+                  "...",
+                  rx.branch_filter_map(|msg| {
+                    msg
+                      .error_state_msg()
+                      .map(|may_err| may_err.unwrap_or("...".to_string()))
                   })
-                  .collect::<Vec<_>>()
-              )
-              .with(
-                dd()
-                  .class("col-sm-12")
-                  .rx_text(
-                    "...",
-                    rx.branch_filter_map(|msg| {
-                      msg
-                        .error_state_msg()
-                        .map(|may_err| may_err.unwrap_or("...".to_string()))
-                    })
-                  )
-              )
-              .with(
-                dd()
-                  .class("col-sm-12")
-                  .rx_text(
-                    "...",
-                    rx.branch_filter_map(|msg| {
-                      msg
-                        .done_state_msg()
-                        .map(|may_done| may_done.unwrap_or("...".to_string()))
-                    })
-                  )
-              )
-
+                )
+            )
           )
           .with(
             button()

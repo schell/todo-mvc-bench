@@ -1,18 +1,17 @@
-use log::{Level,trace};
+use log::{trace, Level};
 use mogwai::prelude::*;
 use std::panic;
 use wasm_bindgen::prelude::*;
+use web_sys::SvgsvgElement;
 
 mod bench_runner;
-use bench_runner::{Benchmark, BenchRunner};
+use bench_runner::{BenchRunner, Benchmark};
 
 mod framework_card;
-use framework_card::{
-    all_cards,
-    FrameworkCard,
-    FrameworkState,
-};
+use framework_card::{all_cards, FrameworkCard, FrameworkState};
 
+mod graph;
+mod store;
 
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -25,11 +24,12 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 #[derive(Clone)]
 pub enum In {
   Startup,
+  Container(HtmlElement),
   ClickedStep,
   ClickedRun,
   StepDisabled(bool),
   SuiteFailed(Benchmark),
-  SuiteCompleted(Benchmark)
+  SuiteCompleted(Benchmark),
 }
 
 
@@ -37,39 +37,55 @@ pub struct App {
   is_stepping: bool,
   cards: Vec<GizmoComponent<FrameworkCard>>,
   bench_runner: GizmoComponent<BenchRunner>,
+  container: Option<HtmlElement>,
   benchmarks: Vec<(String, Benchmark)>,
-  framework_index: Option<usize>
+  framework_index: Option<usize>,
+  graph: Option<Gizmo<SvgsvgElement>>,
 }
 
 
 impl App {
   pub fn new() -> Self {
-    let mut cards =
+    let cards =
       all_cards()
       .into_iter()
-      .map(|card | card.into_component())
+      .map(|card| card.into_component())
       .collect::<Vec<_>>();
-    cards
-      .iter_mut()
-      .for_each(|card| {
-        card.build();
-      });
 
-    let mut bench_runner = BenchRunner::new().into_component();
-    bench_runner.build();
+    let bench_runner = BenchRunner::new().into_component();
 
     App {
       is_stepping: false,
+      container: None,
       cards,
       bench_runner,
       benchmarks: vec![],
-      framework_index: None
+      framework_index: None,
+      graph: None,
+    }
+  }
+
+  fn maybe_init_runner(&mut self) {
+    self.benchmarks = vec![];
+    // Causes the graph to be dropped (also from the DOM).
+    self.graph = None;
+
+    let container = self.container.as_ref().expect("no container");
+    self.bench_runner.append_to(container);
+
+    if !self.bench_runner.with_state(|b| b.has_steps()) {
+      if let Some(framework) = self.get_next_framework() {
+        self.bench_runner.update(&bench_runner::In::InitBench(
+          framework.url,
+          framework.create_todo_method,
+        ));
+      }
     }
   }
 
   fn push_benchmark(
     &mut self,
-    benchmark:Benchmark
+    benchmark: Benchmark,
   ) -> &mut GizmoComponent<FrameworkCard> {
     let index = self.framework_index.expect("no framework index");
     let card = self.cards.get_mut(index).expect("no framework");
@@ -98,7 +114,7 @@ impl App {
       self
       .framework_index
       .expect("get_next_framework_url but all suites are done");
-    for index in start_ndx .. self.cards.len() {
+    for index in start_ndx..self.cards.len() {
       trace!("finding next framework at index: {}", index);
       let card =
         self
@@ -122,17 +138,15 @@ pub enum Out {
   NextStep(String),
   StepDisabled(bool),
   SuiteCompleted(Benchmark),
-  SuiteFailed(Benchmark)
+  SuiteFailed(Benchmark),
 }
 
 
 impl Out {
   fn next_step_string(&self) -> Option<String> {
     match self {
-      Out::NextStep(step) => {
-        Some(step.clone())
-      }
-      _ => { None }
+      Out::NextStep(step) => Some(step.clone()),
+      _ => None,
     }
   }
 
@@ -149,15 +163,17 @@ impl Out {
 impl Component for App {
   type ModelMsg = In;
   type ViewMsg = Out;
+  type DomNode = HtmlElement;
 
   fn update(
     &mut self,
     msg: &Self::ModelMsg,
     tx: &Transmitter<Self::ViewMsg>,
-    sub: &Subscriber<Self::ModelMsg>
+    sub: &Subscriber<Self::ModelMsg>,
   ) {
     match msg {
       In::Startup => {
+        trace!("startup");
         sub.subscribe_filter_map(&self.bench_runner.recv, move |child_msg| {
           match child_msg {
             bench_runner::Out::Failed(benchmark) => {
@@ -169,40 +185,41 @@ impl Component for App {
             bench_runner::Out::StepDisabled(is_disabled) => {
               Some(In::StepDisabled(*is_disabled))
             }
-            _ => { None }
+            _ => None,
           }
         });
       }
+
+      In::Container(el) => {
+        // now that we have the test and results container, we can try to read
+        // any previous benchmarks and show them here.
+        if let Ok(benchmarks) = store::read_benchmarks() {
+          let graph = graph::graph_benchmarks(&benchmarks);
+          el.append_child(&graph).expect("could not append graph of previous results");
+          self.graph = Some(graph);
+        }
+        self.container = Some(el.clone());
+      }
+
       In::ClickedStep => {
         self.is_stepping = true;
-        if !self.bench_runner.with_state(|b| b.has_steps()) {
-          if let Some(framework) = self.get_next_framework() {
-            self.bench_runner.update(&bench_runner::In::InitBench(
-              framework.url,
-              framework.create_todo_method
-            ));
-          }
-        }
+        self.maybe_init_runner();
         self.bench_runner.update(&bench_runner::In::Step);
       }
+
       In::ClickedRun => {
         self.is_stepping = false;
-        if !self.bench_runner.with_state(|b| b.has_steps()) {
-          if let Some(framework) = self.get_next_framework() {
-            self.bench_runner.update(&bench_runner::In::InitBench(
-              framework.url,
-              framework.create_todo_method
-            ));
-          }
-        }
+        self.maybe_init_runner();
         self.bench_runner.update(&bench_runner::In::Step);
       }
+
       In::StepDisabled(is_disabled) => {
         tx.send(&Out::StepDisabled(*is_disabled));
         if !is_disabled && !self.is_stepping {
           self.bench_runner.update(&bench_runner::In::Step);
         }
       }
+
       In::SuiteFailed(benchmark) => {
         let msg =
           benchmark
@@ -211,82 +228,93 @@ impl Component for App {
           .unwrap_or("unknown suite failure".into());
         trace!("{}", msg);
         let card = self.push_benchmark(benchmark.clone());
-        card.update(&framework_card::In::ChangeState(FrameworkState::Erred(msg)));
+        card
+          .update(&framework_card::In::ChangeState(FrameworkState::Erred(msg)));
       }
+
       In::SuiteCompleted(benchmark) => {
         let _component_card = self.push_benchmark(benchmark.clone());
         if let Some(framework) = self.get_next_framework() {
           self.bench_runner.update(&bench_runner::In::InitBench(
             framework.url,
-            framework.create_todo_method
+            framework.create_todo_method,
           ));
           if !self.is_stepping {
             self.bench_runner.update(&bench_runner::In::Step);
           }
         } else {
+          let mut benchmarks = self.benchmarks.clone();
+          benchmarks.sort_by(|(_,a), (_,b)| {
+            let a = a.total().round() as u32;
+            let b = b.total().round() as u32;
+            a.cmp(&b)
+          });
+          // Write the benchmarks to local storage if possible
+          let _ = store::write_items(&benchmarks);
+
+          let graph = graph::graph_benchmarks(&benchmarks);
+
+          self
+            .bench_runner
+            .parent_node()
+            .into_iter()
+            .for_each(|parent| {
+              let _ = parent.remove_child(&self.bench_runner);
+            });
+
+          let container = self.container.as_ref().expect("no container!");
+          let _ = container.append_child(&graph);
+
+          self.graph = Some(graph);
+
           trace!("done.");
         }
       }
     }
   }
 
-  fn builder(
+  fn view(
     &self,
     tx: Transmitter<Self::ModelMsg>,
-    rx: Receiver<Self::ViewMsg>
-  ) -> GizmoBuilder {
+    rx: Receiver<Self::ViewMsg>,
+  ) -> Gizmo<HtmlElement> {
+    trace!("view");
     div()
       .id("main")
       .class("container-fluid")
       .with(
         nav()
           .class("navbar navbar-light bg-light rounded-sm mt-2 mb-4")
+          .with(div().class("navbar-brand").text("schell's todo-mvc-bench"))
           .with(
-            div()
-              .class("navbar-brand")
-              .text("schell's todo-mvc-bench")
+            ul().class("navbar-nav mr-auto ml-auto")
+              .with(
+                li().class("nav-item").with(
+                  dl().with(dt().text("Next step")).with(dd().rx_text(
+                    "",
+                    rx.branch_filter_map(|msg| msg.next_step_string()),
+                  )),
+                ),
+              ))
+          .with(
+            button()
+              .id("step_button")
+              .class("btn btn-secondary mr-1")
+              .text("Step")
+              .rx_boolean_attribute(
+                "disabled",
+                false,
+                rx.branch_filter_map(|msg| msg.step_disabled()),
+              )
+              .tx_on("click", tx.contra_map(|_| In::ClickedStep)),
           )
-        .with(
-          ul()
-            .class("navbar-nav mr-auto ml-auto")
-            .with(
-              li()
-                .class("nav-item")
-                .with(
-                  dl()
-                    .with(
-                      dt()
-                        .text("Next step")
-                    )
-                    .with(
-                      dd()
-                        .rx_text(
-                          "",
-                          rx.branch_filter_map(|msg| msg.next_step_string())
-                        )
-                    )
-                )
-            )
-        )
-        .with(
-          button()
-            .id("step_button")
-            .class("btn btn-secondary mr-1")
-            .text("Step")
-            .rx_boolean_attribute(
-              "disabled",
-              false,
-              rx.branch_filter_map(|msg| msg.step_disabled())
-            )
-            .tx_on("click", tx.contra_map(|_| In::ClickedStep))
-        )
-        .with(
-          button()
-            .id("run_button")
-            .class("btn btn-primary")
-            .text("Run")
-            .tx_on("click", tx.contra_map(|_| In::ClickedRun))
-        )
+          .with(
+            button()
+              .id("run_button")
+              .class("btn btn-primary")
+              .text("Run")
+              .tx_on("click", tx.contra_map(|_| In::ClickedRun)),
+          ),
       )
       .with(
         div()
@@ -294,35 +322,17 @@ impl Component for App {
           .with(
             div()
               .class("row embed-responsive embed-responsive-16by9 mb-4")
-              .with_pre_built(
-                self
-                  .bench_runner
-                  .gizmo
-                  .as_ref()
-                  .expect("no bench runner")
-                  .html_element
-                  .clone()
-              )
+              .tx_post_build(
+                tx.contra_map(|el: &HtmlElement| In::Container(el.clone())),
+              ),
           )
-          .with(
-            div()
-              .class("row")
-              .with(
-                div()
-                  .class("card-deck mb-3 text-center")
-                  .with_gizmos(
-                    self
-                      .cards
-                      .iter()
-                      .map(|gc:&GizmoComponent<_>| {
-                        gc.gizmo
-                          .as_ref()
-                          .expect("gizmo is not built")
-                      })
-                      .collect::<Vec<_>>()
-                  )
-              )
-          )
+          .with(div().class("row").with({
+            let card_container = div().class("card-deck mb-3 text-center");
+            for card in self.cards.iter() {
+              let _ = card_container.append_child(card);
+            }
+            card_container
+          })),
       )
   }
 }
@@ -331,12 +341,9 @@ impl Component for App {
 #[wasm_bindgen]
 pub fn bench() -> Result<(), JsValue> {
   panic::set_hook(Box::new(console_error_panic_hook::hook));
-  console_log::init_with_level(Level::Trace)
-    .unwrap();
+  console_log::init_with_level(Level::Trace).unwrap();
 
-  App::new()
-    .into_component()
-    .run_init(vec![In::Startup])
+  App::new().into_component().run_init(vec![In::Startup])
 }
 
 
@@ -344,10 +351,10 @@ pub fn bench() -> Result<(), JsValue> {
 mod bench_tests {
   extern crate wasm_bindgen_test;
 
-  use wasm_bindgen::UnwrapThrowExt;
-  use wasm_bindgen_test::*;
   use mogwai::prelude::*;
+  use wasm_bindgen::UnwrapThrowExt;
   use wasm_bindgen_test::wasm_bindgen_test_configure;
+  use wasm_bindgen_test::*;
 
   use todo_mvc_bench_lib::wait_for;
 
@@ -356,14 +363,10 @@ mod bench_tests {
 
 
   fn wait_and_build_div(millis: i32, id: &str, class: &str) {
-    let id:String = id.into();
-    let class:String = class.into();
+    let id: String = id.into();
+    let class: String = class.into();
     timeout(millis, move || {
-      div()
-        .id(&id)
-        .class(&class)
-        .build().unwrap_throw()
-        .run().unwrap_throw();
+      div().id(&id).class(&class).run().unwrap_throw();
       false
     });
   }
@@ -372,10 +375,8 @@ mod bench_tests {
   #[wasm_bindgen_test]
   async fn test_can_wait_for_one() {
     wait_and_build_div(1000, "my_div", "");
-    let found_el = wait_for(
-      2000,
-      || document().get_element_by_id("my_div")
-    ).await;
+    let found_el =
+      wait_for(2000, || document().get_element_by_id("my_div")).await;
     assert!(found_el.is_some());
     let found_el = found_el.unwrap();
     assert!(found_el.elapsed >= 1000.0 && found_el.elapsed < 2000.0);
@@ -386,22 +387,15 @@ mod bench_tests {
     wait_and_build_div(1000, "my_div_a", "my_div");
     wait_and_build_div(1000, "my_div_b", "my_div");
     wait_and_build_div(1000, "my_div_c", "my_div");
-    let found_el = wait_for(
-      2000,
-      || {
-        document()
-          .query_selector_all(".my_div")
-          .ok()
-          .map(|list| {
-            if list.length() > 0 {
-              Some(list)
-            } else {
-              None
-            }
-          })
-          .flatten()
-      }
-    ).await;
+    let found_el =
+      wait_for(2000, || {
+      document()
+        .query_selector_all(".my_div")
+        .ok()
+        .map(|list| if list.length() > 0 { Some(list) } else { None })
+        .flatten()
+    })
+    .await;
     assert!(found_el.is_some());
     let found_el = found_el.unwrap();
     assert!(found_el.elapsed >= 1000.0 && found_el.elapsed < 2000.0);

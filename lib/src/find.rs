@@ -33,7 +33,11 @@ impl<T> FoundFuture<T> {
       op: Box::new(f),
       timeout,
       poll_count: 0,
-      start: 0.0
+        start:
+        window()
+            .performance()
+            .expect("no performance object")
+            .now()
     }
   }
 
@@ -44,7 +48,7 @@ impl<T> FoundFuture<T> {
 
 
 impl<T> Future for FoundFuture<T> {
-  type Output = Option<Found<T>>;
+  type Output = Result<Found<T>, f64>;
 
   fn poll(self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Self::Output> {
     let now =
@@ -56,9 +60,6 @@ impl<T> Future for FoundFuture<T> {
     let future = self.get_mut();
 
     // Do some timing upkeep
-    if future.poll_count == 0 {
-      future.start = now;
-    }
     future.poll_count += 1;
 
     // Look for the thing
@@ -98,12 +99,17 @@ impl<T> Future for FoundFuture<T> {
         .expect("no performance object")
         .now();
 
-      Poll::Ready(Some(Found {
+      Poll::Ready(Ok(Found {
         elapsed: now - future.start,
         found
       }))
     } else {
-      Poll::Ready(None)
+      let now =
+        window()
+        .performance()
+        .expect("no performance object")
+        .now();
+      Poll::Ready(Err(now - future.start))
     }
   }
 }

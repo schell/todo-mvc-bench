@@ -7,7 +7,7 @@ use super::bench_runner::Benchmark;
 
 const KEY: &str = "todo-mvc-bench";
 
-pub fn write_items(items: &Vec<(String, Benchmark)>) -> Result<(), JsValue> {
+pub fn write_items(items: &Vec<Benchmark>) -> Result<(), JsValue> {
   let str_value =
     serde_json::to_string(items)
     .expect("Could not serialize benchmarks");
@@ -22,7 +22,7 @@ pub fn write_items(items: &Vec<(String, Benchmark)>) -> Result<(), JsValue> {
   Ok(())
 }
 
-pub fn read_benchmarks() -> Result<Vec<(String, Benchmark)>, JsValue> {
+pub fn read_benchmarks() -> Result<Vec<Benchmark>, JsValue> {
   let storage =
     utils::window()
     .local_storage()?
@@ -36,9 +36,9 @@ pub fn read_benchmarks() -> Result<Vec<(String, Benchmark)>, JsValue> {
   let items =
     may_item_str
     .map(|json_str:String| {
-      let items:Vec<(String, Benchmark)> =
+      let items:Vec<Benchmark> =
         serde_json::from_str(&json_str)
-        .expect("Could not deserialize benchmarks");
+        .unwrap_or(vec![]);
       items
     })
     .unwrap_or(vec![]);

@@ -7,7 +7,7 @@ use find::{FoundFuture, Found};
 pub async fn wait_for<T, F>(
   millis: u32,
   f:F
-) -> Option<Found<T>>
+) -> Result<Found<T>, f64>
 where
   F: Fn() -> Option<T> + 'static
 {
@@ -15,7 +15,10 @@ where
 }
 
 
-pub async fn wait(millis: u32) {
-  let _done:Option<Found<()>> = wait_for(millis, || { None }).await;
-  ()
+pub async fn wait(millis: u32) -> f64 {
+  let future = wait_for(millis, || { None as Option<Found<()>>});
+  match future.await {
+    Ok(Found{elapsed,..}) => elapsed,
+    Err(elapsed) => elapsed
+  }
 }

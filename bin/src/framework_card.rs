@@ -1,11 +1,13 @@
 use log::trace;
 use mogwai::prelude::*;
-use web_sys::{Event, Document, KeyboardEvent, KeyboardEventInit};
+use web_sys::{Document, KeyboardEvent, KeyboardEventInit};
 
 
 #[derive(Clone, Debug)]
 pub enum FrameworkState {
   Ready,
+  Running,
+  Done,
   Erred(String),
 }
 
@@ -13,18 +15,17 @@ pub enum FrameworkState {
 #[derive(Clone, Debug)]
 pub enum CreateTodoMethod {
   Change,
-  Keydown,
-  Keypress,
   InputAndKeypress,
   InputAndKeyup,
   InputAndKeydown,
-  Submit
+  Submit,
 }
 
 
 impl CreateTodoMethod {
   pub fn dispatch_events(&self, document: &Document, input: &HtmlInputElement) {
-    let event = |name: &str, from: &HtmlElement| {
+    let event =
+      |name: &str, from: &HtmlElement| {
       let event =
         document
         .create_event("Event")
@@ -35,23 +36,16 @@ impl CreateTodoMethod {
         .expect("could not dispatch event");
     };
 
-    let keyboard_enter_event = |name:&str, from: &HtmlElement| {
+    let keyboard_enter_event =
+      |name: &str, from: &HtmlElement| {
       let mut init = KeyboardEventInit::new();
       init.bubbles(true);
       init.cancelable(true);
       init.which(13);
       init.key_code(13);
       init.key("Enter");
-      let event =
-        KeyboardEvent::new_with_keyboard_event_init_dict(
-          name,
-          &init
-        )
+      let event = KeyboardEvent::new_with_keyboard_event_init_dict(name, &init)
         .expect("could not create keyboard event");
-      let event =
-        event
-        .dyn_into::<Event>()
-        .expect("could not cast keyboard event");
       from
         .dispatch_event(&event)
         .expect("could not dispatch event");
@@ -59,12 +53,6 @@ impl CreateTodoMethod {
     match self {
       CreateTodoMethod::Change => {
         event("change", input);
-      }
-      CreateTodoMethod::Keydown => {
-        keyboard_enter_event("keydown", input);
-      }
-      CreateTodoMethod::Keypress => {
-        keyboard_enter_event("keypress", input);
       }
       CreateTodoMethod::InputAndKeypress => {
         event("input", input);
@@ -97,7 +85,7 @@ pub struct FrameworkCard {
   pub attributes: Vec<(String, String)>,
   pub is_enabled: bool,
   pub state: FrameworkState,
-  pub create_todo_method: CreateTodoMethod
+  pub create_todo_method: CreateTodoMethod,
 }
 
 
@@ -112,7 +100,7 @@ impl FrameworkCard {
     let attributes =
       attributes
       .iter()
-      .map(|(s,b)| (s.to_string(), b.to_string()))
+      .map(|(s, b)| (s.to_string(), b.to_string()))
       .collect::<Vec<_>>();
 
     FrameworkCard {
@@ -121,8 +109,17 @@ impl FrameworkCard {
       attributes,
       is_enabled,
       state: FrameworkState::Ready,
-      create_todo_method
+      create_todo_method,
     }
+  }
+
+  pub fn framework_attribute(&self, key: &str) -> Option<String> {
+    for (attr, value) in self.attributes.iter() {
+      if attr == key {
+        return Some(value.clone());
+      }
+    }
+    None
   }
 }
 
@@ -130,14 +127,17 @@ impl FrameworkCard {
 #[derive(Clone)]
 pub enum In {
   ChangeState(FrameworkState),
-  ToggleEnabled
+  ToggleEnabled,
+  IsEnabled(bool),
+  ClickedSolo,
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Out {
   ChangeState(FrameworkState),
-  IsEnabled(bool)
+  IsEnabled(bool),
+  Solo(String),
 }
 
 
@@ -161,7 +161,7 @@ impl Component for FrameworkCard {
     &mut self,
     msg: &Self::ModelMsg,
     tx: &Transmitter<Self::ViewMsg>,
-    _sub: &Subscriber<Self::ModelMsg>
+    _sub: &Subscriber<Self::ModelMsg>,
   ) {
     match msg {
       In::ChangeState(st) => {
@@ -171,7 +171,17 @@ impl Component for FrameworkCard {
       }
       In::ToggleEnabled => {
         self.is_enabled = !self.is_enabled;
+        trace!("{} card toggled {}", self.name, self.is_enabled);
         tx.send(&Out::IsEnabled(self.is_enabled))
+      }
+      In::IsEnabled(enabled) => {
+        self.is_enabled = *enabled;
+        tx.send(&Out::IsEnabled(self.is_enabled))
+      }
+      In::ClickedSolo => {
+        // Don't enable, it will be taken care of by the parent,
+        // so just bubble it out
+        tx.send(&Out::Solo(self.name.clone()));
       }
     }
   }
@@ -179,24 +189,35 @@ impl Component for FrameworkCard {
   fn view(
     &self,
     tx: Transmitter<Self::ModelMsg>,
-    rx: Receiver<Self::ViewMsg>
+    rx: Receiver<Self::ViewMsg>,
   ) -> Gizmo<HtmlElement> {
-    // TODO: Add status badge for framework card
-    // https://getbootstrap.com/docs/4.3/components/badge/
     div()
       .class("card mb-4 shadow-sm")
       .with(
-        div()
-          .class("card-header")
-          .with(
-            h4()
-              .class("my-0 font-weight-normal")
-              .with(
-                a()
-                  .attribute("href", &self.url)
-                  .text(&self.name)
-              )
-          )
+        div().class("card-header").with(
+          div()
+            .class("row")
+            .with(div().class("col-sm-1").with(div()))
+            .with(h4().class("col-sm-11 my-0 font-weight-normal ").with(
+              a().attribute("href", &self.url).text(&self.name).rx_class(
+                "text-secondary",
+                rx.branch_filter_map(|msg| {
+                  match msg {
+                    Out::ChangeState(st) => Some(
+                      match st {
+                        FrameworkState::Ready => "text-secondary",
+                        FrameworkState::Running => "text-primary",
+                        FrameworkState::Done => "text-success",
+                        FrameworkState::Erred(_) => "text-danger",
+                      }
+                      .into(),
+                    ),
+                    _ => None,
+                  }
+                }),
+              ),
+            )),
+        ),
       )
       .with(
         div()
@@ -205,65 +226,82 @@ impl Component for FrameworkCard {
             {
               let mut dl = dl().class("row list-unstyled mt-3 mb-4");
               for (attr, val) in self.attributes.iter() {
-                let dt =
-                  dt()
-                  .class("col-sm-6")
-                  .text(attr);
-                let dd =
-                  dd()
-                  .class("col-sm-6")
-                  .text(val);
+                let dt = dt().class("col-sm-6").text(attr);
+                let dd = dd().class("col-sm-6").text(val);
                 dl = dl.with(dt).with(dd);
               }
               dl
             }
-            .with(
-              dd()
-                .class("col-sm-12")
-                .rx_text(
-                  "...",
-                  rx.branch_filter_map(|msg| {
-                    msg
-                      .error_state_msg()
-                      .map(|may_err| may_err.unwrap_or("...".to_string()))
-                  })
-                )
-            )
+            .with(dd().class("col-sm-12").rx_text(
+              "...",
+              rx.branch_filter_map(|msg| {
+                msg
+                  .error_state_msg()
+                  .map(|may_err| may_err.unwrap_or("...".to_string()))
+              }),
+            )),
           )
           .with(
-            button()
-              .attribute("type", "button")
-              .rx_class(
-                "btn btn-lg btn-block btn-primary",
-                rx.branch_filter_map(|msg| {
-                  if let Out::IsEnabled(is_enabled) = msg {
-                    let btn_color =
-                      if *is_enabled {
-                        "btn-primary"
+            div()
+              .class("row")
+              .with({
+                let mk_to_enabled = |
+                  static_text: String,
+                  enabled_text: String,
+                  disabled_text: String,
+                | {
+                  move |is_enabled| {
+                    format!(
+                      "{} {}",
+                      &static_text,
+                      if is_enabled {
+                        &enabled_text
                       } else {
-                        "btn-warning"
-                      }.to_string();
-                    Some(format!("btn btn-lg btn-block {}", btn_color))
-                  } else {
-                    None
+                        &disabled_text
+                      }
+                    )
                   }
-                })
-              )
-              .rx_text("Enabled", rx.branch_filter_map(|msg| {
-                if let Out::IsEnabled(is_enabled) = msg {
-                  Some(
-                    if *is_enabled {
-                      "Enabled"
-                    } else {
-                      "Disabled"
-                    }.to_string()
+                };
+                let to_button_class = mk_to_enabled(
+                  "col-sm-6 btn".into(),
+                  "btn-primary".into(),
+                  "btn-warning".into(),
+                );
+                let to_button_text = mk_to_enabled(
+                  "".into(),
+                  "Enabled".into(),
+                  "Disabled".into()
+                );
+                button()
+                  .rx_class(
+                    &to_button_class(self.is_enabled),
+                    rx.branch_filter_map(move |msg| {
+                      if let Out::IsEnabled(is_enabled) = msg {
+                        Some(to_button_class(*is_enabled))
+                      } else {
+                        None
+                      }
+                    }),
                   )
-                } else {
-                  None
-                }
-              }))
-              .tx_on("click", tx.contra_map(|_| In::ToggleEnabled))
-          )
+                  .rx_text(
+                    &to_button_text(self.is_enabled),
+                    rx.branch_filter_map(move |msg| {
+                      if let Out::IsEnabled(is_enabled) = msg {
+                        Some(to_button_text(*is_enabled))
+                      } else {
+                        None
+                      }
+                    }),
+                  )
+                  .tx_on("click", tx.contra_map(|_| In::ToggleEnabled))
+              })
+              .with(
+                button()
+                  .class("btn btn-outline-secondary col-sm-6")
+                  .text("Solo")
+                  .tx_on("click", tx.contra_map(|_| In::ClickedSolo)),
+              ),
+          ),
       )
   }
 }
@@ -271,6 +309,28 @@ impl Component for FrameworkCard {
 
 pub fn all_cards() -> Vec<FrameworkCard> {
   vec![
+    FrameworkCard::new(
+      "mogwai 0.1",
+      "frameworks/mogwai-0.1/index.html",
+      &[
+        ("language", "rust"),
+        ("version", "0.1.5"),
+        ("has vdom", "no"),
+      ],
+      true,
+      CreateTodoMethod::Change,
+    ),
+    FrameworkCard::new(
+      "mogwai 0.2",
+      "frameworks/mogwai/index.html",
+      &[
+        ("language", "rust"),
+        ("version", "0.2.0"),
+        ("has vdom", "no"),
+      ],
+      true,
+      CreateTodoMethod::Change,
+    ),
     FrameworkCard::new(
       "sauron",
       "frameworks/sauron/index.html",
@@ -280,18 +340,7 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", "yes"),
       ],
       true,
-      CreateTodoMethod::InputAndKeypress
-    ),
-    FrameworkCard::new(
-      "mogwai",
-      "frameworks/mogwai/index.html",
-      &[
-        ("language", "rust"),
-        ("version", "0.1.5"),
-        ("has vdom", "no"),
-      ],
-      true,
-      CreateTodoMethod::Change
+      CreateTodoMethod::InputAndKeypress,
     ),
     FrameworkCard::new(
       "yew",
@@ -302,7 +351,7 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", "yes"),
       ],
       true,
-      CreateTodoMethod::InputAndKeypress
+      CreateTodoMethod::InputAndKeypress,
     ),
     FrameworkCard::new(
       "Backbone",
@@ -313,7 +362,18 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", "no"),
       ],
       true,
-      CreateTodoMethod::InputAndKeypress
+      CreateTodoMethod::InputAndKeypress,
+    ),
+    FrameworkCard::new(
+      "Asterius",
+      "frameworks/asterius/index.html",
+      &[
+        ("language", "haskell"),
+        ("version", "0"),
+        ("has vdom", "no"),
+      ],
+      false,
+      CreateTodoMethod::InputAndKeypress,
     ),
     FrameworkCard::new(
       "Ember",
@@ -324,7 +384,7 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", "?"),
       ],
       true,
-      CreateTodoMethod::InputAndKeyup
+      CreateTodoMethod::InputAndKeyup,
     ),
     FrameworkCard::new(
       "Angular",
@@ -335,7 +395,7 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", "no"),
       ],
       true,
-      CreateTodoMethod::Submit
+      CreateTodoMethod::Submit,
     ),
     FrameworkCard::new(
       "Mithril",
@@ -346,7 +406,7 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", "yes"),
       ],
       true,
-      CreateTodoMethod::InputAndKeypress
+      CreateTodoMethod::InputAndKeypress,
     ),
     FrameworkCard::new(
       "Mithril2",
@@ -357,18 +417,117 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         ("has vdom", "yes"),
       ],
       true,
-      CreateTodoMethod::InputAndKeypress
+      CreateTodoMethod::InputAndKeypress,
     ),
     FrameworkCard::new(
       "Elm",
       "frameworks/elm17/index.html",
       &[
-        ("language", "javascript"),
+        ("language", "elm"),
         ("version", "0.17"),
         ("has vdom", "yes"),
       ],
       true,
-      CreateTodoMethod::InputAndKeydown
+      CreateTodoMethod::InputAndKeydown,
+    ),
+    FrameworkCard::new(
+      "Preact",
+      "frameworks/preact/index.html",
+      &[
+        ("language", "javascript"),
+        ("version", "8.1.0"),
+        ("has vdom", "yes"),
+      ],
+      true,
+      CreateTodoMethod::InputAndKeydown,
+    ),
+    FrameworkCard::new(
+      "vanilla",
+      "frameworks/vanilla-es6/index.html",
+      &[
+        ("language", "javascript"),
+        ("version", "none"),
+        ("has vdom", "no"),
+      ],
+      false,
+      CreateTodoMethod::InputAndKeydown,
+    ),
+    FrameworkCard::new(
+      "Ractive",
+      "frameworks/ractive/index.html",
+      &[
+        ("language", "javascript"),
+        ("version", "0.3.9"),
+        ("has vdom", "yes"),
+      ],
+      true,
+      CreateTodoMethod::InputAndKeydown,
+    ),
+    FrameworkCard::new(
+      "Knockout",
+      "frameworks/knockoutjs/index.html",
+      &[
+        ("language", "javascript"),
+        ("version", "3.1.0"),
+        ("has vdom", "no"),
+      ],
+      false,
+      CreateTodoMethod::InputAndKeydown,
+    ),
+    FrameworkCard::new(
+      "Vue",
+      "frameworks/vue/index.html",
+      &[
+        ("language", "javascript"),
+        ("version", "1.0.24"),
+        ("has vdom", "yes"),
+      ],
+      false,
+      CreateTodoMethod::Change,
+    ),
+    FrameworkCard::new(
+      "Mercury",
+      "frameworks/mercury/index.html",
+      &[
+        ("language", "javascript"),
+        ("version", "3.1.7"),
+        ("has vdom", "yes"),
+      ],
+      true,
+      CreateTodoMethod::InputAndKeydown,
+    ),
+    FrameworkCard::new(
+      "React",
+      "frameworks/react/index.html",
+      &[
+        ("language", "javascript"),
+        ("version", "15.0.2"),
+        ("has vdom", "yes"),
+      ],
+      true,
+      CreateTodoMethod::InputAndKeydown,
+    ),
+    FrameworkCard::new(
+      "Om",
+      "frameworks/om/index.html",
+      &[
+        ("language", "clojurescript"),
+        ("version", "0.5"),
+        ("has vdom", "yes"),
+      ],
+      true,
+      CreateTodoMethod::InputAndKeydown,
+    ),
+    FrameworkCard::new(
+      "choo",
+      "frameworks/choo/index.html",
+      &[
+        ("language", "javascript"),
+        ("version", "1.3.0"),
+        ("no vdom", "still diffs"),
+      ],
+      false,
+      CreateTodoMethod::InputAndKeydown,
     ),
   ]
 }

@@ -22,7 +22,7 @@ else
     echo "  done installing wasm-pack."
 fi
 
-echo "Building web-sys-examples w/ wasm-pack..."
+echo "Building w/ wasm-pack..."
 mkdir -p release
 wasm-pack build --release --target no-modules || exit 1
 cp -R pkg index.html style.css release/

@@ -23,9 +23,9 @@ else
 fi
 
 echo "Building web-sys-examples w/ wasm-pack..."
-mkdir -p release 
+mkdir -p release
 wasm-pack build --release --target no-modules || exit 1
-cp -R pkg index.html style.css release/ 
+cp -R pkg index.html style.css release/
 sleep 1
 tar czvf release.tar.gz release || exit 1
 sleep 1

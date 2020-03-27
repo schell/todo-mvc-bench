@@ -2,3 +2,5 @@
 **/*.rs.bk
 /pkg
 */target
+release
+release.tar.gz

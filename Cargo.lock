@@ -174,19 +174,6 @@ checksum = "8452105ba047068f40ff7093dd1d9da90898e63dd61736462e9cdda6a90ad3c3"
 [[package]]
 name = "mogwai"
 version = "0.2.1"
-dependencies = [
- "console_log",
- "futures",
- "js-sys",
- "log",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "mogwai"
-version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "376a654a1a456db71aa208b63e855f5df09971359d0435b53f213bf3e4ffb387"
 dependencies = [
@@ -303,7 +290,7 @@ dependencies = [
  "console_log",
  "js-sys",
  "log",
- "mogwai 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mogwai",
  "serde",
  "serde_json",
  "todo-mvc-bench-lib",
@@ -322,7 +309,7 @@ dependencies = [
  "console_log",
  "futures",
  "log",
- "mogwai 0.2.1",
+ "mogwai",
  "serde",
  "serde_json",
  "wasm-bindgen",

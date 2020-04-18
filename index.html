@@ -7,12 +7,12 @@
         <link rel="stylesheet" href="style.css">
     </head>
     <body>
-        <script src="pkg/todo_mvc_bench.js"></script>
         <script type=module>
-         window
-             .wasm_bindgen('pkg/todo_mvc_bench_bg.wasm')
-             .then( m => m.bench() )
-             .catch(console.error);
+        import init, { bench } from './pkg/todo_mvc_bench.js';
+         window.addEventListener('load', async () => {
+             await init();
+             await bench();
+         });
         </script>
     </body>
 </html>

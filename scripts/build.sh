@@ -24,8 +24,8 @@ fi
 
 echo "Building w/ wasm-pack..."
 mkdir -p release
-wasm-pack build --release --target no-modules || exit 1
-cp -R pkg index.html style.css release/
+wasm-pack build --release --target web || exit 1
+cp -R pkg index.html style.css frameworks release/
 sleep 1
 tar czvf release.tar.gz release || exit 1
 sleep 1

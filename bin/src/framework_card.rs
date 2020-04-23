@@ -2,7 +2,6 @@ use log::trace;
 use mogwai::prelude::*;
 use web_sys::{Document, KeyboardEvent, KeyboardEventInit};
 
-
 #[derive(Clone, Debug)]
 pub enum FrameworkState {
   Ready,
@@ -10,7 +9,6 @@ pub enum FrameworkState {
   Done,
   Erred(String),
 }
-
 
 #[derive(Clone, Debug)]
 pub enum CreateTodoMethod {
@@ -21,13 +19,10 @@ pub enum CreateTodoMethod {
   Submit,
 }
 
-
 impl CreateTodoMethod {
   pub fn dispatch_events(&self, document: &Document, input: &HtmlInputElement) {
-    let event =
-      |name: &str, from: &HtmlElement| {
-      let event =
-        document
+    let event = |name: &str, from: &HtmlElement| {
+      let event = document
         .create_event("Event")
         .expect("could not create input event");
       event.init_event_with_bubbles_and_cancelable(name, true, true);
@@ -36,8 +31,7 @@ impl CreateTodoMethod {
         .expect("could not dispatch event");
     };
 
-    let keyboard_enter_event =
-      |name: &str, from: &HtmlElement| {
+    let keyboard_enter_event = |name: &str, from: &HtmlElement| {
       let mut init = KeyboardEventInit::new();
       init.bubbles(true);
       init.cancelable(true);
@@ -76,7 +70,6 @@ impl CreateTodoMethod {
   }
 }
 
-
 // TODO: Allow disabling
 #[derive(Clone)]
 pub struct FrameworkCard {
@@ -88,7 +81,6 @@ pub struct FrameworkCard {
   pub create_todo_method: CreateTodoMethod,
 }
 
-
 impl FrameworkCard {
   pub fn new(
     name: &str,
@@ -97,8 +89,7 @@ impl FrameworkCard {
     is_enabled: bool,
     create_todo_method: CreateTodoMethod,
   ) -> Self {
-    let attributes =
-      attributes
+    let attributes = attributes
       .iter()
       .map(|(s, b)| (s.to_string(), b.to_string()))
       .collect::<Vec<_>>();
@@ -123,7 +114,6 @@ impl FrameworkCard {
   }
 }
 
-
 #[derive(Clone)]
 pub enum In {
   ChangeState(FrameworkState),
@@ -132,14 +122,12 @@ pub enum In {
   ClickedSolo,
 }
 
-
 #[derive(Clone, Debug)]
 pub enum Out {
   ChangeState(FrameworkState),
   IsEnabled(bool),
   Solo(String),
 }
-
 
 impl Out {
   fn error_state_msg(&self) -> Option<Option<String>> {
@@ -150,7 +138,6 @@ impl Out {
     }
   }
 }
-
 
 impl Component for FrameworkCard {
   type ModelMsg = In;
@@ -191,121 +178,86 @@ impl Component for FrameworkCard {
     tx: Transmitter<Self::ModelMsg>,
     rx: Receiver<Self::ViewMsg>,
   ) -> Gizmo<HtmlElement> {
-    div()
-      .class("card mb-4 shadow-sm")
+    tr()
       .with(
-        div().class("card-header").with(
-          div()
-            .class("row")
-            .with(div().class("col-sm-1").with(div()))
-            .with(h4().class("col-sm-11 my-0 font-weight-normal ").with(
-              a().attribute("href", &self.url).text(&self.name).rx_class(
-                "text-secondary",
-                rx.branch_filter_map(|msg| {
-                  match msg {
-                    Out::ChangeState(st) => Some(
-                      match st {
-                        FrameworkState::Ready => "text-secondary",
-                        FrameworkState::Running => "text-primary",
-                        FrameworkState::Done => "text-success",
-                        FrameworkState::Erred(_) => "text-danger",
-                      }
-                      .into(),
-                    ),
-                    _ => None,
-                  }
-                }),
+        td().with(
+          input()
+            .attribute("type", "checkbox")
+            .rx_boolean_attribute(
+              "checked",
+              self.is_enabled,
+              rx.branch_filter_map(move |msg| {
+                if let Out::IsEnabled(is_enabled) = msg {
+                  Some(*is_enabled)
+                } else {
+                  None
+                }
+              }),
+            )
+            .tx_on("click", tx.contra_map(|_| In::ToggleEnabled)),
+        ),
+      )
+      .with(td().with(
+        a().attribute("href", &self.url).text(&self.name).rx_class(
+          "text-secondary",
+          rx.branch_filter_map(|msg| {
+            match msg {
+              Out::ChangeState(st) => Some(
+                match st {
+                  FrameworkState::Ready => "text-secondary",
+                  FrameworkState::Running => "text-primary",
+                  FrameworkState::Done => "text-success",
+                  FrameworkState::Erred(_) => "text-danger",
+                }
+                .into(),
               ),
-            )),
+              _ => None,
+            }
+          }),
+        ),
+      ))
+      .with(
+        td().text(
+          self
+            .attributes
+            .iter()
+            .find(|item| item.0 == "version")
+            .map(|item| &item.1)
+            .unwrap_throw(),
         ),
       )
       .with(
-        div()
-          .class("card-body")
-          .with(
-            {
-              let mut dl = dl().class("row list-unstyled mt-3 mb-4");
-              for (attr, val) in self.attributes.iter() {
-                let dt = dt().class("col-sm-6").text(attr);
-                let dd = dd().class("col-sm-6").text(val);
-                dl = dl.with(dt).with(dd);
-              }
-              dl
-            }
-            .with(dd().class("col-sm-12").rx_text(
-              "...",
-              rx.branch_filter_map(|msg| {
-                msg
-                  .error_state_msg()
-                  .map(|may_err| may_err.unwrap_or("...".to_string()))
-              }),
-            )),
-          )
-          .with(
-            div()
-              .class("row")
-              .with({
-                let mk_to_enabled = |
-                  static_text: String,
-                  enabled_text: String,
-                  disabled_text: String,
-                | {
-                  move |is_enabled| {
-                    format!(
-                      "{} {}",
-                      &static_text,
-                      if is_enabled {
-                        &enabled_text
-                      } else {
-                        &disabled_text
-                      }
-                    )
-                  }
-                };
-                let to_button_class = mk_to_enabled(
-                  "col-sm-6 btn".into(),
-                  "btn-primary".into(),
-                  "btn-warning".into(),
-                );
-                let to_button_text = mk_to_enabled(
-                  "".into(),
-                  "Enabled".into(),
-                  "Disabled".into()
-                );
-                button()
-                  .rx_class(
-                    &to_button_class(self.is_enabled),
-                    rx.branch_filter_map(move |msg| {
-                      if let Out::IsEnabled(is_enabled) = msg {
-                        Some(to_button_class(*is_enabled))
-                      } else {
-                        None
-                      }
-                    }),
-                  )
-                  .rx_text(
-                    &to_button_text(self.is_enabled),
-                    rx.branch_filter_map(move |msg| {
-                      if let Out::IsEnabled(is_enabled) = msg {
-                        Some(to_button_text(*is_enabled))
-                      } else {
-                        None
-                      }
-                    }),
-                  )
-                  .tx_on("click", tx.contra_map(|_| In::ToggleEnabled))
-              })
-              .with(
-                button()
-                  .class("btn btn-outline-secondary col-sm-6")
-                  .text("Solo")
-                  .tx_on("click", tx.contra_map(|_| In::ClickedSolo)),
-              ),
-          ),
+        td().text(
+          self
+            .attributes
+            .iter()
+            .find(|item| item.0 == "language")
+            .map(|item| &item.1)
+            .unwrap_throw(),
+        ),
       )
+      .with(
+        td().text(
+          self
+            .attributes
+            .iter()
+            .find(|item| item.0.contains("vdom"))
+            .map(|item| &item.1)
+            .unwrap_throw(),
+        ),
+      )
+      .with(td().text("???"))
+      .with(td().text("???"))
+      .with(td().with(dd().class("col-sm-12").rx_text(
+        "...",
+        rx.branch_filter_map(|msg| {
+          msg
+            .error_state_msg()
+            .map(|may_err| may_err.unwrap_or("...".to_string()))
+        }),
+      )))
   }
 }
-
 
 pub fn all_cards() -> Vec<FrameworkCard> {
   vec![

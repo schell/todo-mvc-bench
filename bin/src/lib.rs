@@ -80,6 +80,8 @@ pub enum In {
   ClickedRun,
   StepDisabled(bool),
   SuiteCompleted(Benchmark),
+  CompletionToggleInput(HtmlInputElement),
+  ToggleAll,
 }
 
 pub struct App {
@@ -92,6 +94,7 @@ pub struct App {
   avg_times: u32,
   current_run: u32,
   graph: Option<Gizmo<SvgsvgElement>>,
+  toggle_all_input: Option<HtmlInputElement>,
 }
 
 impl App {
@@ -113,6 +116,7 @@ impl App {
       benchmarks: vec![],
       framework_index: None,
       graph: None,
+      toggle_all_input: None,
     }
   }
 
@@ -204,7 +208,6 @@ pub enum Out {
   RunDisabled(bool),
   SuiteCompleted(Benchmark),
   SuiteFailed(Benchmark),
-  ToggleAll(bool),
 }
 
 impl Component for App {
@@ -372,6 +375,22 @@ impl Component for App {
           }
         }
       }
+
+      In::CompletionToggleInput(el) => {
+        self.toggle_all_input = Some(el.clone());
+      }
+
+      In::ToggleAll => {
+        let input =
+          self
+          .toggle_all_input
+          .as_ref()
+          .unwrap_throw();
+        let is_enabled = input.checked();
+        for card in self.cards.iter_mut() {
+          card.update(&framework_card::In::IsEnabled(is_enabled));
+        }
+      }
     }
   }
 
@@ -504,8 +523,12 @@ impl Component for App {
                       .with(th().with(
                         input()
                           .attribute("type", "checkbox")
-                          // TODO: on click => toggle all 
-                          // .tx_on("change", ????),
+                          .tx_post_build(
+                            tx.contra_map(
+                              |el:&HtmlInputElement| In::CompletionToggleInput(el.clone())
+                            )
+                          )
+                          .tx_on("change", tx.contra_map(|_| In::ToggleAll)),
                       ))
                       .with(th().text("Frameworks"))
                       .with(th().text("Version"))

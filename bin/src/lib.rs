@@ -13,7 +13,6 @@ use framework_card::{all_cards, FrameworkCard, FrameworkState};
 mod graph;
 mod store;
 
-
 #[cfg(test)]
 mod bench_tests {
   extern crate wasm_bindgen_test;
@@ -25,9 +24,7 @@ mod bench_tests {
 
   use todo_mvc_bench_lib::wait_for;
 
-
   wasm_bindgen_test_configure!(run_in_browser);
-
 
   fn wait_and_build_div(millis: i32, id: &str, class: &str) {
     let id: String = id.into();
@@ -37,7 +34,6 @@ mod bench_tests {
       false
     });
   }
-
 
   #[wasm_bindgen_test]
   async fn test_can_wait_for_one() {
@@ -54,8 +50,7 @@ mod bench_tests {
     wait_and_build_div(1000, "my_div_a", "my_div");
     wait_and_build_div(1000, "my_div_b", "my_div");
     wait_and_build_div(1000, "my_div_c", "my_div");
-    let found_el =
-      wait_for(2000, || {
+    let found_el = wait_for(2000, || {
       document()
         .query_selector_all(".my_div")
         .ok()
@@ -70,13 +65,11 @@ mod bench_tests {
   }
 }
 
-
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
 // allocator.
 #[cfg(feature = "wee_alloc")]
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
-
 
 #[derive(Clone)]
 pub enum In {
@@ -87,8 +80,9 @@ pub enum In {
   ClickedRun,
   StepDisabled(bool),
   SuiteCompleted(Benchmark),
+  CompletionToggleInput(HtmlInputElement),
+  ToggleAll,
 }
-
 
 pub struct App {
   is_stepping: bool,
@@ -100,13 +94,12 @@ pub struct App {
   avg_times: u32,
   current_run: u32,
   graph: Option<Gizmo<SvgsvgElement>>,
+  toggle_all_input: Option<HtmlInputElement>,
 }
-
 
 impl App {
   pub fn new() -> Self {
-    let cards =
-      all_cards()
+    let cards = all_cards()
       .into_iter()
       .map(|card| card.into_component())
       .collect::<Vec<_>>();
@@ -123,6 +116,7 @@ impl App {
       benchmarks: vec![],
       framework_index: None,
       graph: None,
+      toggle_all_input: None,
     }
   }
 
@@ -182,8 +176,7 @@ impl App {
     if self.framework_index.is_none() {
       return None;
     }
-    let start_ndx =
-      self
+    let start_ndx = self
       .framework_index
       .expect("get_next_framework_url but all suites are done");
     let mut found_index = None;
@@ -206,7 +199,6 @@ impl App {
   }
 }
 
-
 #[derive(Clone)]
 pub enum Out {
   IframeSrc(String),
@@ -217,7 +209,6 @@ pub enum Out {
   SuiteCompleted(Benchmark),
   SuiteFailed(Benchmark),
 }
-
 
 impl Component for App {
   type ModelMsg = In;
@@ -242,20 +233,10 @@ impl Component for App {
           }
           _ => None,
         });
-
-        for card in self.cards.iter() {
-          sub.subscribe_filter_map(&card.recv, |msg| match msg {
-            framework_card::Out::Solo(name) => {
-              Some(In::SoloFramework(name.clone()))
-            }
-            _ => None,
-          })
-        }
       }
 
       In::AvgOverTimesChange(event) => {
-        let may_input =
-          event
+        let may_input = event
           .target()
           .map(|t| t.clone().unchecked_into::<HtmlInputElement>());
         if let Some(input) = may_input {
@@ -269,7 +250,7 @@ impl Component for App {
 
         if let Some(event) = event.dyn_ref::<KeyboardEvent>() {
           if event.key() == "Enter" {
-            sub.send_async(async {In::ClickedRun});
+            sub.send_async(async { In::ClickedRun });
           }
         }
       }
@@ -298,7 +279,10 @@ impl Component for App {
         self.is_stepping = false;
         // The current bench run is 1
         if let Some(name) = self.init_runner() {
-          tx.send(&Out::RunningFramework(name, (self.current_run, self.avg_times)));
+          tx.send(&Out::RunningFramework(
+            name,
+            (self.current_run, self.avg_times),
+          ));
         }
         self.bench_runner.update(&bench_runner::In::Step);
         tx.send(&Out::RunDisabled(true));
@@ -315,16 +299,14 @@ impl Component for App {
 
         let component_card =
           self.get_current_framework().expect("no current framework");
-        let card_state =
-          if let Some(msg) = benchmark.failed_message.as_ref() {
+        let card_state = if let Some(msg) = benchmark.failed_message.as_ref() {
           FrameworkState::Erred(msg.clone())
         } else {
           FrameworkState::Done
         };
         component_card.update(&framework_card::In::ChangeState(card_state));
 
-        let may_framework =
-          if let Some(framework) = self.get_next_framework() {
+        let may_framework = if let Some(framework) = self.get_next_framework() {
           framework
             .update(&framework_card::In::ChangeState(FrameworkState::Running));
           Some(framework.with_state(|f| f.clone()))
@@ -339,7 +321,10 @@ impl Component for App {
             name: framework.name.clone(),
             language: framework.framework_attribute("language").clone(),
           });
-          tx.send(&Out::RunningFramework(framework.name.clone(), (self.current_run, self.avg_times)));
+          tx.send(&Out::RunningFramework(
+            framework.name.clone(),
+            (self.current_run, self.avg_times),
+          ));
           if !self.is_stepping {
             self.bench_runner.update(&bench_runner::In::Step);
           }
@@ -347,7 +332,7 @@ impl Component for App {
           // If we have some more bench runs to average, do them!
           if self.current_run < self.avg_times {
             self.current_run += 1;
-            sub.send_async(async {In::ClickedRun});
+            sub.send_async(async { In::ClickedRun });
           } else {
             self.current_run = 1;
 
@@ -373,9 +358,28 @@ impl Component for App {
             self.framework_index = None;
             self.benchmarks = vec![];
 
-            tx.send(&Out::RunningFramework("".into(), (self.current_run, self.avg_times)));
+            tx.send(&Out::RunningFramework(
+              "".into(),
+              (self.current_run, self.avg_times),
+            ));
             trace!("done.");
           }
+        }
+      }
+
+      In::CompletionToggleInput(el) => {
+        self.toggle_all_input = Some(el.clone());
+      }
+
+      In::ToggleAll => {
+        let input =
+          self
+          .toggle_all_input
+          .as_ref()
+          .unwrap_throw();
+        let is_enabled = input.checked();
+        for card in self.cards.iter_mut() {
+          card.update(&framework_card::In::IsEnabled(is_enabled));
         }
       }
     }
@@ -465,7 +469,7 @@ impl Component for App {
                     tx.contra_filter_map(|event: &Event| {
                       let event = event.dyn_ref::<KeyboardEvent>()?;
                       if event.key() == "Enter" {
-                        Some(In::AvgOverTimesChange(event.unchecked_ref::<Event>().clone())) 
+                        Some(In::AvgOverTimesChange(event.unchecked_ref::<Event>().clone()))
                       } else {
                         None
                       }
@@ -501,17 +505,40 @@ impl Component for App {
                 tx.contra_map(|el: &HtmlElement| In::Container(el.clone())),
               ),
           )
-          .with(div().class("row").with({
-            let card_container = div().class("card-deck mb-3 text-center");
-            for card in self.cards.iter() {
-              let _ = card_container.append_child(card);
-            }
-            card_container
-          })),
+          .with(
+            table()
+              .with(
+                thead()
+                  .with(
+                    tr()
+                      .with(th().with(
+                        input()
+                          .attribute("type", "checkbox")
+                          .tx_post_build(
+                            tx.contra_map(
+                              |el:&HtmlInputElement| In::CompletionToggleInput(el.clone())
+                            )
+                          )
+                          .tx_on("change", tx.contra_map(|_| In::ToggleAll)),
+                      ))
+                      .with(th().text("Frameworks"))
+                      .with(th().text("Version"))
+                      .with(th().text("Language"))
+                      .with(th().text("vDOM"))
+                      .with(th().text("Size"))
+                      .with(th().text("Score"))
+                      .with(th().text("Note"))
+                  ))
+              .with({
+                let body = tbody();
+                for card in self.cards.iter() {
+                    let _ = body.append_child(card);
+                }
+                body
+              }))
       )
   }
 }
-
 
 #[wasm_bindgen]
 pub fn bench() -> Result<(), JsValue> {

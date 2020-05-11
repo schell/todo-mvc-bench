@@ -171,26 +171,20 @@ impl Component for FrameworkCard {
     tx: Transmitter<Self::ModelMsg>,
     rx: Receiver<Self::ViewMsg>,
   ) -> Gizmo<HtmlElement> {
-    // Keep the row's input up to date using set_checked, as using
-    // html attributes is not enough.
-    let input:Gizmo<HtmlInputElement> = input();
-    input.set_checked(self.is_enabled);
-    let input_self:HtmlInputElement = (&input as &HtmlInputElement).clone();
-    rx.branch().respond(move |msg| match msg {
-      Out::IsEnabled(is_enabled) => {
-        input_self.set_checked(*is_enabled);
-      }
-      _ => {}
-    });
-
     tr()
       .with(
-        td().with({
+        td().with(
           // Add the input inline in the DOM
-          input
+          input()
             .attribute("type", "checkbox")
             .tx_on("click", tx.contra_map(|_| In::ToggleEnabled))
-        }),
+            .rx_checked(self.is_enabled, rx.branch_filter_map(|msg| match msg {
+              Out::IsEnabled(is_enabled) => {
+                Some(*is_enabled)
+              }
+              _ => { None }
+            }))
+        ),
       )
       .with(td().with(
         a().attribute("href", &self.url).text(&self.name).rx_class(

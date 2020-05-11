@@ -233,15 +233,6 @@ impl Component for App {
           }
           _ => None,
         });
-
-        for card in self.cards.iter() {
-          sub.subscribe_filter_map(&card.recv, |msg| match msg {
-            framework_card::Out::Solo(name) => {
-              Some(In::SoloFramework(name.clone()))
-            }
-            _ => None,
-          })
-        }
       }
 
       In::AvgOverTimesChange(event) => {

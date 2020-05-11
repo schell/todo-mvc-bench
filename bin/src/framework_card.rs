@@ -119,14 +119,12 @@ pub enum In {
   ChangeState(FrameworkState),
   ToggleEnabled,
   IsEnabled(bool),
-  ClickedSolo,
 }
 
 #[derive(Clone, Debug)]
 pub enum Out {
   ChangeState(FrameworkState),
   IsEnabled(bool),
-  Solo(String),
 }
 
 impl Out {
@@ -164,11 +162,6 @@ impl Component for FrameworkCard {
       In::IsEnabled(enabled) => {
         self.is_enabled = *enabled;
         tx.send(&Out::IsEnabled(self.is_enabled))
-      }
-      In::ClickedSolo => {
-        // Don't enable, it will be taken care of by the parent,
-        // so just bubble it out
-        tx.send(&Out::Solo(self.name.clone()));
       }
     }
   }

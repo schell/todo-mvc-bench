@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::UnwrapThrowExt;
-use mogwai::utils::{timeout, window};
+use mogwai::utils::{set_immediate, window};
 
 
 #[derive(Clone)]
@@ -75,7 +75,7 @@ impl<T> Future for FoundFuture<T> {
             .waker()
             .clone()
         )));
-      timeout(0, move || {
+      set_immediate(move || {
         let mut waker_var =
           waker
           .try_lock()
@@ -85,9 +85,6 @@ impl<T> Future for FoundFuture<T> {
           .take()
           .expect("could not unwrap stored waker on ElementFuture");
         waker.wake();
-
-        // Don't automatically reschedule
-        false
       });
 
       Poll::Pending

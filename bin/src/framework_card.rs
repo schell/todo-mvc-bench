@@ -178,12 +178,13 @@ impl Component for FrameworkCard {
           input()
             .attribute("type", "checkbox")
             .tx_on("click", tx.contra_map(|_| In::ToggleEnabled))
-            .rx_checked(self.is_enabled, rx.branch_filter_map(|msg| match msg {
-              Out::IsEnabled(is_enabled) => {
-                Some(*is_enabled)
-              }
-              _ => { None }
-            }))
+            .rx_checked(
+              self.is_enabled,
+              rx.branch_filter_map(|msg| match msg {
+                Out::IsEnabled(is_enabled) => Some(*is_enabled),
+                _ => None,
+              }),
+            ),
         ),
       )
       .with(td().with(
@@ -277,7 +278,7 @@ pub fn all_cards() -> Vec<FrameworkCard> {
       "frameworks/sauron/index.html",
       &[
         ("language", "rust"),
-        ("version", "0.20.3"),
+        ("version", "0.28.0"),
         ("has vdom", "yes"),
       ],
       true,

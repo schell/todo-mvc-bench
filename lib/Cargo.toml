@@ -33,9 +33,9 @@ wee_alloc = { version = "0.4.2", optional = true }
 
 [dependencies.mogwai]
 #version = "0.2.2"
-git = "https://github.com/schell/mogwai.git"
-rev = "cc00fad62a01c6bfd2cdd7c8b85e635eb20b7038"
-#path = "../../mogwai/mogwai"
+#git = "https://github.com/schell/mogwai.git"
+#rev = "cc00fad62a01c6bfd2cdd7c8b85e635eb20b7038"
+path = "../../mogwai/mogwai"
 
 [dependencies.web-sys]
 version = "^0.3"

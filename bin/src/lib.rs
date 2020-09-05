@@ -1,5 +1,6 @@
 use log::{trace, Level};
 use mogwai::prelude::*;
+use rand::{seq::SliceRandom, thread_rng};
 use std::panic;
 use wasm_bindgen::prelude::*;
 use web_sys::{KeyboardEvent, SvgsvgElement};
@@ -76,6 +77,7 @@ pub enum In {
     AvgOverTimesChange(Event),
     SoloFramework(String),
     ClickedRun,
+    RunNext,
     StepDisabled(bool),
     SuiteCompleted(Benchmark),
     CompletionToggleInput(HtmlInputElement),
@@ -83,15 +85,14 @@ pub enum In {
 }
 
 pub struct App {
-    is_stepping: bool,
-    cards: Vec<GizmoComponent<FrameworkCard>>,
-    bench_runner: GizmoComponent<BenchRunner>,
+    cards: Vec<Gizmo<FrameworkCard>>,
+    bench_runner: Gizmo<BenchRunner>,
     container: Option<HtmlElement>,
     benchmarks: Vec<Benchmark>,
-    framework_index: Option<usize>,
+    frameworks: Option<Vec<FrameworkCard>>,
     avg_times: u32,
     current_run: u32,
-    graph: Option<Gizmo<SvgsvgElement>>,
+    graph: Option<View<SvgsvgElement>>,
     toggle_all_input: Option<HtmlInputElement>,
 }
 
@@ -99,96 +100,68 @@ impl App {
     pub fn new() -> Self {
         let cards = all_cards()
             .into_iter()
-            .map(|card| card.into_component())
+            .map(|card| Gizmo::from(card))
             .collect::<Vec<_>>();
 
-        let bench_runner = BenchRunner::new().into_component();
+        let bench_runner = Gizmo::from(BenchRunner::default());
 
         App {
-            is_stepping: false,
             container: None,
             avg_times: 1,
             current_run: 1,
             cards,
             bench_runner,
             benchmarks: vec![],
-            framework_index: None,
+            frameworks: None,
             graph: None,
             toggle_all_input: None,
         }
     }
 
-    /// Possibly initialize the bench runner before running a new suite of steps.
-    fn init_runner(&mut self) -> Option<String> {
+    fn find_framework_card_by_name(&self, name: &str) -> Option<&Gizmo<FrameworkCard>> {
+        for gizmo in self.cards.iter() {
+            let card_name = gizmo.with_state(|card| card.name.clone());
+            if card_name == name {
+                return Some(gizmo)
+            }
+        }
+        None
+    }
+
+    /// Init the benchmark run
+    fn init_run(&mut self) {
         // Causes the graph to be dropped (also from the DOM).
         self.graph = None;
         let container = self.container.as_ref().expect("no container");
-        let _ = container.append_child(&self.bench_runner);
+        let _ = container.append_child(self.bench_runner.dom_ref());
+
         // Set all the cards to "ready"
         for card in self.cards.iter_mut() {
             card.update(&framework_card::In::ChangeState(FrameworkState::Ready));
         }
-        // Update the framework that will be running and initialize the bench runner
-        if let Some(framework) = self.get_next_framework() {
-            framework.update(&framework_card::In::ChangeState(FrameworkState::Running));
-            let framework = framework.with_state(|f| f.clone());
-            self.bench_runner.update(&bench_runner::In::InitBench {
-                url: framework.url.clone(),
-                create_todo_method: framework.create_todo_method.clone(),
-                name: framework.name.clone(),
-                language: framework.framework_attribute("language").clone(),
-            });
-            Some(framework.name.clone())
-        } else {
-            None
-        }
-    }
 
-    fn increment_framework_index(&mut self) {
-        if let Some(index) = self.framework_index.as_mut() {
-            *index += 1;
-            if *index == self.cards.len() {
-                self.framework_index = None;
+        // Gather all the frameworks we'll run
+        let mut frameworks = vec![];
+        for _ in 1..=self.avg_times {
+            let mut frameworks_run = vec![];
+            for gizmo in self.cards.iter() {
+                let may_card = gizmo.with_state(|card| {
+                    if card.is_enabled {
+                        Some(card.clone())
+                    } else {
+                        None
+                    }
+                });
+                if let Some(card) = may_card {
+                    frameworks_run.push(card.clone());
+                }
             }
-        } else {
-            self.framework_index = Some(0);
+            // Randomize the order
+            let mut rng = thread_rng();
+            frameworks_run.shuffle(&mut rng);
+            frameworks.extend(frameworks_run);
         }
-    }
-
-    fn get_current_framework(&mut self) -> Option<&mut GizmoComponent<FrameworkCard>> {
-        if self.framework_index.is_none() {
-            return None;
-        }
-
-        let index = self.framework_index.unwrap();
-        self.cards.get_mut(index)
-    }
-
-    fn get_next_framework(&mut self) -> Option<&mut GizmoComponent<FrameworkCard>> {
-        self.increment_framework_index();
-        if self.framework_index.is_none() {
-            return None;
-        }
-        let start_ndx = self
-            .framework_index
-            .expect("get_next_framework_url but all suites are done");
-        let mut found_index = None;
-        'find_index: for index in start_ndx..self.cards.len() {
-            trace!("finding next framework at index: {}", index);
-            let card = self.cards.get(index).unwrap_throw();
-            if card.with_state(|c| c.is_enabled) {
-                found_index = Some(index);
-                break 'find_index;
-            }
-        }
-
-        self.framework_index = found_index.clone();
-
-        if let Some(index) = found_index {
-            self.cards.get_mut(index)
-        } else {
-            None
-        }
+        self.frameworks = Some(frameworks);
     }
 }
 
@@ -269,16 +242,25 @@ impl Component for App {
             }
 
             In::ClickedRun => {
-                self.is_stepping = false;
-                // The current bench run is 1
-                if let Some(name) = self.init_runner() {
-                    tx.send(&Out::RunningFramework(
-                        name,
-                        (self.current_run, self.avg_times),
-                    ));
-                }
-                self.bench_runner.update(&bench_runner::In::Step);
+                self.init_run();
+                sub.send_async(async { In::RunNext });
                 tx.send(&Out::RunDisabled(true));
+            }
+
+            In::RunNext => {
+                if let Some(mut frameworks) = self.frameworks.take() {
+                    if let Some(next_framework) = frameworks.pop() {
+                        if let Some(card_gizmo) =
+                            self.find_framework_card_by_name(&next_framework.name)
+                        {
+                            card_gizmo
+                                .update(&framework_card::In::ChangeState(FrameworkState::Running));
+                        }
+                        self.frameworks = Some(frameworks);
+                    } else {
+                        self.frameworks = None;
+                    }
+                }
             }
 
             In::StepDisabled(is_disabled) => {
@@ -289,72 +271,71 @@ impl Component for App {
                 trace!("suite completed");
                 tx.send(&Out::RunDisabled(false));
                 self.benchmarks.push(benchmark.clone());
+                sub.send_async(async { In::RunNext });
+                //let component_card = self.get_current_framework().expect("no current framework");
+                //let card_state = if let Some(msg) = benchmark.failed_message.as_ref() {
+                //    FrameworkState::Erred(msg.clone())
+                //} else {
+                //    FrameworkState::Done
+                //};
+                //component_card.update(&framework_card::In::ChangeState(card_state));
 
-                let component_card = self.get_current_framework().expect("no current framework");
-                let card_state = if let Some(msg) = benchmark.failed_message.as_ref() {
-                    FrameworkState::Erred(msg.clone())
-                } else {
-                    FrameworkState::Done
-                };
-                component_card.update(&framework_card::In::ChangeState(card_state));
+                //let may_framework = if let Some(framework) = self.get_next_framework() {
+                //    framework.update(&framework_card::In::ChangeState(FrameworkState::Running));
+                //    Some(framework.with_state(|f| f.clone()))
+                //} else {
+                //    None
+                //};
 
-                let may_framework = if let Some(framework) = self.get_next_framework() {
-                    framework.update(&framework_card::In::ChangeState(FrameworkState::Running));
-                    Some(framework.with_state(|f| f.clone()))
-                } else {
-                    None
-                };
+                //if let Some(framework) = may_framework {
+                //    self.bench_runner.update(&bench_runner::In::InitBench {
+                //        url: framework.url.clone(),
+                //        create_todo_method: framework.create_todo_method.clone(),
+                //        name: framework.name.clone(),
+                //        language: framework.framework_attribute("language").clone(),
+                //    });
+                //    tx.send(&Out::RunningFramework(
+                //        framework.name.clone(),
+                //        (self.current_run, self.avg_times),
+                //    ));
+                //    if !self.is_stepping {
+                //        self.bench_runner.update(&bench_runner::In::Step);
+                //    }
+                //} else {
+                //    // If we have some more bench runs to average, do them!
+                //    if self.current_run < self.avg_times {
+                //        self.current_run += 1;
+                //        sub.send_async(async { In::ClickedRun });
+                //    } else {
+                //        self.current_run = 1;
 
-                if let Some(framework) = may_framework {
-                    self.bench_runner.update(&bench_runner::In::InitBench {
-                        url: framework.url.clone(),
-                        create_todo_method: framework.create_todo_method.clone(),
-                        name: framework.name.clone(),
-                        language: framework.framework_attribute("language").clone(),
-                    });
-                    tx.send(&Out::RunningFramework(
-                        framework.name.clone(),
-                        (self.current_run, self.avg_times),
-                    ));
-                    if !self.is_stepping {
-                        self.bench_runner.update(&bench_runner::In::Step);
-                    }
-                } else {
-                    // If we have some more bench runs to average, do them!
-                    if self.current_run < self.avg_times {
-                        self.current_run += 1;
-                        sub.send_async(async { In::ClickedRun });
-                    } else {
-                        self.current_run = 1;
+                //        let benchmarks = self.benchmarks.clone();
+                //        // Write the benchmarks to local storage if possible
+                //        let _ = store::write_items(&benchmarks);
+                //        // Graph them
+                //        let graph = graph::graph_benchmarks(&benchmarks);
 
-                        let benchmarks = self.benchmarks.clone();
-                        // Write the benchmarks to local storage if possible
-                        let _ = store::write_items(&benchmarks);
-                        // Graph them
-                        let graph = graph::graph_benchmarks(&benchmarks);
+                //        self.bench_runner
+                //            .parent_node()
+                //            .into_iter()
+                //            .for_each(|parent| {
+                //                let _ = parent.remove_child(&self.bench_runner);
+                //            });
 
-                        self.bench_runner
-                            .parent_node()
-                            .into_iter()
-                            .for_each(|parent| {
-                                let _ = parent.remove_child(&self.bench_runner);
-                            });
+                //        let container = self.container.as_ref().expect("no container!");
+                //        let _ = container.append_child(&graph);
 
-                        let container = self.container.as_ref().expect("no container!");
-                        let _ = container.append_child(&graph);
+                //        self.graph = Some(graph);
 
-                        self.graph = Some(graph);
+                //        self.benchmarks = vec![];
 
-                        self.framework_index = None;
-                        self.benchmarks = vec![];
-
-                        tx.send(&Out::RunningFramework(
-                            "".into(),
-                            (self.current_run, self.avg_times),
-                        ));
-                        trace!("done.");
-                    }
-                }
+                //        tx.send(&Out::RunningFramework(
+                //            "".into(),
+                //            (self.current_run, self.avg_times),
+                //        ));
+                //        trace!("done.");
+                //    }
+                //}
             }
 
             In::CompletionToggleInput(el) => {
@@ -373,142 +354,129 @@ impl Component for App {
 
     fn view(
         &self,
-        tx: Transmitter<Self::ModelMsg>,
-        rx: Receiver<Self::ViewMsg>,
-    ) -> Gizmo<HtmlElement> {
-        trace!("view");
-        div()
-            .id("main")
-            .class("container-fluid")
-            .with(
-                nav()
-                    .class("navbar navbar-expand-lg navbar-light bg-light rounded-sm mt-2 mb-4")
-                    .with(
-                        a().attribute("href", "https://github.com/schell/todo-mvc-bench")
-                            .text("schell's todo-mvc-bench"),
-                    )
-                    .with(
-                        ul().class("navbar-nav ml-2 mr-auto")
-                            .with(li().class("nav-item mr-1").with(span().rx_text(
+        tx: &Transmitter<Self::ModelMsg>,
+        rx: &Receiver<Self::ViewMsg>,
+    ) -> ViewBuilder<HtmlElement> {
+        let card_refs: Vec<HtmlElement> = self
+            .cards
+            .iter()
+            .map(|gizmo| gizmo.dom_ref().clone())
+            .collect();
+
+        builder! {
+            <div id="main" class="container-fluid">
+                <nav class="navbar navbar-expand-lg navbar-light bg-light rounded-sm mt-2 mb-4">
+                    <a href="https://github.com/schell/todo-mvc-bench">"schell's todo-mvc-bench"</a>
+                    <ul class="navbar-nav ml-2 mr-auto">
+                        <li class="nav-item mr-1">
+                            <span>
+                            {(
                                 "",
                                 rx.branch_filter_map(|msg| match msg {
                                     Out::RunningFramework(name, _) => Some(name.clone()),
                                     _ => None,
-                                }),
-                            )))
-                            .with(li().class("nav-item").with(span().rx_text(
+                                })
+                            )}
+                            </span>
+                        </li>
+                        <li class="nav-item">
+                            <span>
+                            {(
                                 "",
                                 rx.branch_filter_map(|msg| match msg {
                                     Out::RunningFramework(_, (n, of)) => {
                                         Some(format!("run #{} of {}", n, of))
                                     }
                                     _ => None,
-                                }),
-                            ))),
-                    )
-                    .with(
-                        div()
-                            .class("input-group col-2")
-                            .with(
-                                div()
-                                    .class("input-group-prepend")
-                                    .with(span().class("input-group-text").text("avg over")),
-                            )
-                            .with(
-                                input()
-                                    .attribute("type", "text")
-                                    .class("form-control")
-                                    .attribute("placeholder", "1")
-                                    .rx_value(
-                                        "",
-                                        rx.branch_filter_map(|msg| match msg {
-                                            Out::SetAvgTimesValue(val) => Some(val.clone()),
-                                            _ => None,
-                                        }),
-                                    )
-                                    .tx_on(
-                                        "change",
-                                        tx.contra_map(|event: &Event| {
-                                            In::AvgOverTimesChange(event.clone())
-                                        }),
-                                    )
-                                    .tx_on(
-                                        "keyup",
-                                        tx.contra_filter_map(|event: &Event| {
-                                            let event = event.dyn_ref::<KeyboardEvent>()?;
-                                            if event.key() == "Enter" {
-                                                Some(In::AvgOverTimesChange(
-                                                    event.unchecked_ref::<Event>().clone(),
-                                                ))
-                                            } else {
-                                                None
-                                            }
-                                        }),
-                                    ),
-                            )
-                            .with(
-                                div().class("input-group-append").with(
-                                    button()
-                                        .id("run_button")
-                                        .class("btn btn-primary")
-                                        .text("Run")
-                                        .tx_on("click", tx.contra_map(|_| In::ClickedRun))
-                                        .rx_boolean_attribute(
-                                            "disabled",
-                                            false,
-                                            rx.branch_filter_map(|msg| match msg {
-                                                Out::RunDisabled(disabled) => Some(*disabled),
-                                                _ => None,
-                                            }),
-                                        ),
-                                ),
-                            ),
-                    ),
-            )
-            .with(
-                div()
-                    .class("container")
-                    .with(
-                        div()
-                            .class("row embed-responsive embed-responsive-16by9 mb-4")
-                            .tx_post_build(
-                                tx.contra_map(|el: &HtmlElement| In::Container(el.clone())),
-                            ),
-                    )
-                    .with(
-                        table()
-                            .with(
-                                thead().with(
-                                    tr().with(
-                                        th().with(
-                                            input()
-                                                .attribute("type", "checkbox")
-                                                .tx_post_build(tx.contra_map(
-                                                    |el: &HtmlInputElement| {
-                                                        In::CompletionToggleInput(el.clone())
-                                                    },
-                                                ))
-                                                .tx_on("change", tx.contra_map(|_| In::ToggleAll)),
-                                        ),
-                                    )
-                                    .with(th().text("Frameworks"))
-                                    .with(th().text("Version"))
-                                    .with(th().text("Language"))
-                                    .with(th().text("vDOM"))
-                                    .with(th().text("Size"))
-                                    .with(th().text("Score"))
-                                    .with(th().text("Note")),
-                                ),
-                            )
-                            .with({
-                                let body = tbody();
-                                for card in self.cards.iter() {
-                                    let _ = body.append_child(card);
+                                })
+                            )}
+                            </span>
+                        </li>
+                    </ul>
+                    <div class="input-group col-2">
+                        <div class="input-group-prepend">
+                            <span class="input-group-text">"avg over"</span>
+                        </div>
+                        <input
+                            type="text"
+                            class="form-control"
+                            placeholder="1"
+                            //.rx_value(
+                            //    "",
+                            //    rx.branch_filter_map(|msg| match msg {
+                            //        Out::SetAvgTimesValue(val) => Some(val.clone()),
+                            //        _ => None,
+                            //    }),
+                            //)
+                            on:change = tx.contra_map(|event: &Event| {
+                                In::AvgOverTimesChange(event.clone())
+                            })
+                            on:keyup = tx.contra_filter_map(|event: &Event| {
+                                let event = event.dyn_ref::<KeyboardEvent>()?;
+                                if event.key() == "Enter" {
+                                    Some(In::AvgOverTimesChange(
+                                        event.unchecked_ref::<Event>().clone(),
+                                    ))
+                                } else {
+                                    None
                                 }
-                                body
-                            }),
-                    ),
-            )
+                            })
+                        />
+                        <div class="input-group-append">
+                            <button
+                                id="run_button"
+                                class="btn btn-primary"
+                                on:click=tx.contra_map(|_| In::ClickedRun)
+                                boolean:disabled=rx.branch_filter_map(|msg| match msg {
+                                    Out::RunDisabled(disabled) => Some(*disabled),
+                                    _ => None,
+                                })>
+                                "Run"
+                            </button>
+                        </div>
+                    </div>
+                </nav>
+                <div class="container">
+                    <div class="row embed-responsive embed-responsive-16by9 mb-4"
+                        post:build=tx.contra_map(|el: &HtmlElement| In::Container(el.clone()))>
+                    </div>
+                    <div class="row mb-4 embed-responsive">
+                        <table class="table table-bordered">
+                            <thead>
+                                <tr>
+                                    <th scope="col">
+                                        <input
+                                            type="checkbox"
+                                            style="cursor: pointer;"
+                                            post:build=tx.contra_map(
+                                                |el: &HtmlInputElement| {
+                                                    In::CompletionToggleInput(el.clone())
+                                                },
+                                            )
+                                            on:change=tx.contra_map(|_| In::ToggleAll)
+                                        />
+                                    </th>
+                                    <th scope="col">"Frameworks"</th>
+                                    <th scope="col">"Version"</th>
+                                    <th scope="col">"Language"</th>
+                                    <th scope="col">"vDOM"</th>
+                                    <th scope="col">"Size"</th>
+                                    <th scope="col">"Score"</th>
+                                    <th scope="col">"Note"</th>
+                                </tr>
+                            </thead>
+                            <tbody post:build=tx.contra_filter_map(move |el:&HtmlElement| {
+                                for card in card_refs.iter() {
+                                    el.append_child(card).expect("could not add card");
+                                }
+                                None
+                            })>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        }
     }
 }
 
@@ -517,5 +485,7 @@ pub fn bench() -> Result<(), JsValue> {
     panic::set_hook(Box::new(console_error_panic_hook::hook));
     console_log::init_with_level(Level::Trace).unwrap();
 
-    App::new().into_component().run_init(vec![In::Startup])
+    let app = Gizmo::from(App::new());
+    app.update(&In::Startup);
+    app.run()
 }

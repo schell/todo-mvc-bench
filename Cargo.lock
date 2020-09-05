@@ -192,14 +192,39 @@ checksum = "8452105ba047068f40ff7093dd1d9da90898e63dd61736462e9cdda6a90ad3c3"
 [[package]]
 name = "mogwai"
 version = "0.3.0"
+source = "git+https://github.com/schell/mogwai#197039165202d2e2e0084c665afe761b12fe7752"
 dependencies = [
  "futures",
  "js-sys",
- "mogwai-html-macro",
+ "mogwai-html-macro 0.2.0 (git+https://github.com/schell/mogwai)",
  "snafu",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "mogwai"
+version = "0.3.0"
+dependencies = [
+ "futures",
+ "js-sys",
+ "mogwai-html-macro 0.2.0",
+ "snafu",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "mogwai-html-macro"
+version = "0.2.0"
+source = "git+https://github.com/schell/mogwai#197039165202d2e2e0084c665afe761b12fe7752"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+ "syn-rsx",
 ]
 
 [[package]]
@@ -395,7 +420,7 @@ dependencies = [
  "getrandom",
  "js-sys",
  "log",
- "mogwai",
+ "mogwai 0.3.0 (git+https://github.com/schell/mogwai)",
  "rand",
  "serde",
  "serde_json",
@@ -415,7 +440,7 @@ dependencies = [
  "console_log",
  "futures",
  "log",
- "mogwai",
+ "mogwai 0.3.0",
  "serde",
  "serde_json",
  "wasm-bindgen",

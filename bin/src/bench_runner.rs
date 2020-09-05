@@ -63,7 +63,10 @@ pub enum In {
 pub enum Out {
     IframeSrc(String),
     StepDisabled(bool),
-    Done(Benchmark),
+    Done {
+        benchmark: Benchmark,
+        framework: FrameworkCard
+    },
 }
 
 impl Out {
@@ -439,7 +442,10 @@ impl Component for BenchRunner {
             In::BenchCompleted(step_runner) => {
                 trace!("bench completed");
                 tx.send(&Out::StepDisabled(false));
-                tx.send(&Out::Done(step_runner.benchmark.clone()));
+                tx.send(&Out::Done{
+                    benchmark: step_runner.benchmark.clone(),
+                    framework: step_runner.framework.clone()
+                });
             }
         }
     }

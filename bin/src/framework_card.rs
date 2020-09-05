@@ -92,7 +92,6 @@ impl FrameworkCard {
 
 #[derive(Clone)]
 pub enum In {
-    Checkbox(HtmlInputElement),
     ChangeState(FrameworkState),
     ToggleEnabled,
     IsEnabled(bool),
@@ -126,9 +125,6 @@ impl Component for FrameworkCard {
         _sub: &Subscriber<Self::ModelMsg>,
     ) {
         match msg {
-            In::Checkbox(input) => {
-
-            }
             In::ChangeState(st) => {
                 trace!("{} state change to {:?}", self.name, st);
                 tx.send(&Out::ChangeState(st.clone()));

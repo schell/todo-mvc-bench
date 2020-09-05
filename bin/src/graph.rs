@@ -1,6 +1,5 @@
 use mogwai::prelude::*;
 use std::{collections::HashMap, convert::TryFrom};
-use wasm_bindgen::UnwrapThrowExt;
 use web_sys::{SvgElement, SvgsvgElement};
 
 use super::bench_runner::{Benchmark, BenchmarkStep};
@@ -75,7 +74,7 @@ impl GraphableBenchmark {
     }
 }
 
-fn graph_entries(benchmarks: &Vec<GraphableBenchmark>) -> Vec<View<SvgElement>> {
+fn graph_entries(benchmarks: &Vec<GraphableBenchmark>) -> (Vec<View<SvgElement>>, f32) {
     let mut max_total = 0.0;
     let mut max_name_width = 0.0;
     let font_size = 12.0;
@@ -114,8 +113,8 @@ fn graph_entries(benchmarks: &Vec<GraphableBenchmark>) -> Vec<View<SvgElement>> 
         let total_text = (View::element_ns("text", "http://www.w3.org/2000/svg")
             as View<SvgElement>)
             .attribute("class", "framework-text")
-            .attribute("x", &format!("{}", font_size))
-            .attribute("y", &format!("{}", text_y + lane_height))
+            .attribute("x", &format!("{}", graph_start + font_size))
+            .attribute("y", &format!("{}", text_y))
             .with(View::from(&total_text_string) as View<Text>);
 
         let to_x_and_width = |x0: f32, x1: f32| -> (f32, f32) {
@@ -147,6 +146,7 @@ fn graph_entries(benchmarks: &Vec<GraphableBenchmark>) -> Vec<View<SvgElement>> 
             let rect = (View::element_ns("rect", "http://www.w3.org/2000/svg") as View<SvgElement>)
                 .attribute("x", &format!("{}", 0))
                 .attribute("y", &format!("{}", next_y + local_bar_y))
+                .attribute("rx", &format!("{}", bar_height / 2.0))
                 .attribute("width", &format!("{}", rect_width))
                 .attribute("height", &format!("{}", bar_height))
                 .attribute("fill", lang_color(gbench.language.as_ref()))
@@ -203,24 +203,6 @@ fn graph_entries(benchmarks: &Vec<GraphableBenchmark>) -> Vec<View<SvgElement>> 
                             )) as View<Text>),
                     );
                 tags.push(event_bar);
-                //let (x, width) = to_x_and_width(event_start as f32, event_end as f32);
-                //let rect = Gizmo::element_ns("rect", "http://www.w3.org/2000/svg")
-                //    .attribute("x", &format!("{}", x))
-                //    .attribute("y", &format!("{}", next_y + local_bar_y))
-                //    .attribute("width", &format!("{}", width))
-                //    .attribute("height", &format!("{}", bar_height))
-                //    .attribute("fill", lang_color(bench.language.as_ref()))
-                //    .attribute("stroke", "white")
-                //    .attribute("stroke-width", "1px")
-                //    .with(
-                //        Gizmo::element_ns("title", "http://www.w3.org/2000/svg").text(&format!(
-                //            "{} - {}ms",
-                //            event_name,
-                //            (event_end - event_start).round() as u32
-                //        )),
-                //    );
-
-                //tags.push(rect);
             }
             next_y += bar_height;
         }
@@ -229,7 +211,7 @@ fn graph_entries(benchmarks: &Vec<GraphableBenchmark>) -> Vec<View<SvgElement>> 
         tags.push(total_text);
     }
 
-    tags
+    (tags, next_y)
 }
 
 fn process_benchmark_data(steps: &Vec<BenchmarkStep>) -> Vec<BenchmarkDatum> {
@@ -258,12 +240,6 @@ fn process_benchmarks(benchmarks: &Vec<Benchmark>) -> Vec<GraphableBenchmark> {
 }
 
 pub fn graph_benchmarks(benchmarks: &Vec<Benchmark>) -> View<SvgsvgElement> {
-    let mut graph = (View::element_ns("svg", "http://www.w3.org/2000/svg") as View<SvgsvgElement>)
-        .attribute("width", "960")
-        .attribute("height", "540")
-        .attribute("viewBox", "0 0 960 540")
-        .attribute("class", "embed-responsive-item");
-
     let mut benchmarks = process_benchmarks(benchmarks);
     benchmarks.sort_by(|bencha, benchb| {
         let a = bencha.max_bench_len().round() as u32;
@@ -278,9 +254,17 @@ pub fn graph_benchmarks(benchmarks: &Vec<Benchmark>) -> View<SvgsvgElement> {
         }
     });
 
-    for entry in graph_entries(&benchmarks).into_iter() {
+    let (entries, height) = graph_entries(&benchmarks);
+    let height = height + 10.0;
+    let mut graph = (View::element_ns("svg", "http://www.w3.org/2000/svg") as View<SvgsvgElement>)
+        .attribute("width", "960")
+        .attribute("height", &format!("{}", height))
+        .attribute("viewBox", &format!("0 0 960 {}", height))
+        .attribute("class", "embed-responsive-item");
+    for entry in entries.into_iter() {
         graph = graph.with(entry);
     }
 
-    graph.downcast().map_err(|_| ()).unwrap_throw()
+    graph
+    //graph.downcast().map_err(|_| ()).unwrap_throw()
 }

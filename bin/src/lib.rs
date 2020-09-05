@@ -64,11 +64,13 @@ mod bench_tests {
     }
 }
 
+
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
 // allocator.
 #[cfg(feature = "wee_alloc")]
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+
 
 #[derive(Clone)]
 pub enum In {
@@ -79,10 +81,14 @@ pub enum In {
     ClickedRun,
     RunNext,
     StepDisabled(bool),
-    SuiteCompleted(Benchmark),
+    SuiteCompleted {
+        benchmark: Benchmark,
+        framework: FrameworkCard,
+    },
     CompletionToggleInput(HtmlInputElement),
     ToggleAll,
 }
+
 
 pub struct App {
     cards: Vec<Gizmo<FrameworkCard>>,
@@ -91,10 +97,10 @@ pub struct App {
     benchmarks: Vec<Benchmark>,
     frameworks: Option<Vec<FrameworkCard>>,
     avg_times: u32,
-    current_run: u32,
     graph: Option<View<SvgsvgElement>>,
     toggle_all_input: Option<HtmlInputElement>,
 }
+
 
 impl App {
     pub fn new() -> Self {
@@ -108,7 +114,6 @@ impl App {
         App {
             container: None,
             avg_times: 1,
-            current_run: 1,
             cards,
             bench_runner,
             benchmarks: vec![],
@@ -122,7 +127,7 @@ impl App {
         for gizmo in self.cards.iter() {
             let card_name = gizmo.with_state(|card| card.name.clone());
             if card_name == name {
-                return Some(gizmo)
+                return Some(gizmo);
             }
         }
         None
@@ -163,18 +168,48 @@ impl App {
         }
         self.frameworks = Some(frameworks);
     }
+
+    /// Display the results
+    fn display_results(&mut self) {
+        let benchmarks = std::mem::replace(&mut self.benchmarks, vec![]);
+        // Write the benchmarks to local storage if possible
+        let _ = store::write_items(&benchmarks);
+        // Graph them
+        let graph = graph::graph_benchmarks(&benchmarks);
+        // Remove the bench runner dom node
+        let bench_runner_dom = self.bench_runner.dom_ref();
+        bench_runner_dom
+            .parent_node()
+            .unwrap()
+            .replace_child(&graph, bench_runner_dom)
+            .unwrap();
+        self.graph = Some(graph);
+
+        trace!("done.");
+    }
 }
+
 
 #[derive(Clone)]
 pub enum Out {
     IframeSrc(String),
-    RunningFramework(String, (u32, u32)),
+    RunningFramework {
+        name: String,
+        remaining: u32,
+    },
     SetAvgTimesValue(String),
     StepDisabled(bool),
     RunDisabled(bool),
-    SuiteCompleted(Benchmark),
-    SuiteFailed(Benchmark),
+    SuiteCompleted {
+        benchmark: Benchmark,
+        framework: FrameworkCard,
+    },
+    SuiteFailed {
+        benchmark: Benchmark,
+        framework: FrameworkCard,
+    },
 }
+
 
 impl Component for App {
     type ModelMsg = In;
@@ -191,9 +226,13 @@ impl Component for App {
             In::Startup => {
                 trace!("startup");
                 sub.subscribe_filter_map(&self.bench_runner.recv, |msg| match msg {
-                    bench_runner::Out::Done(benchmark) => {
-                        Some(In::SuiteCompleted(benchmark.clone()))
-                    }
+                    bench_runner::Out::Done {
+                        benchmark,
+                        framework,
+                    } => Some(In::SuiteCompleted {
+                        framework: framework.clone(),
+                        benchmark: benchmark.clone(),
+                    }),
                     bench_runner::Out::StepDisabled(is_disabled) => {
                         Some(In::StepDisabled(*is_disabled))
                     }
@@ -248,6 +287,7 @@ impl Component for App {
             }
 
             In::RunNext => {
+                trace!("run next");
                 if let Some(mut frameworks) = self.frameworks.take() {
                     if let Some(next_framework) = frameworks.pop() {
                         if let Some(card_gizmo) =
@@ -256,9 +296,17 @@ impl Component for App {
                             card_gizmo
                                 .update(&framework_card::In::ChangeState(FrameworkState::Running));
                         }
+                        tx.send(&Out::RunningFramework{
+                            name: next_framework.name.clone(),
+                            remaining: frameworks.len() as u32,
+                        });
                         self.frameworks = Some(frameworks);
+                        self.bench_runner.update(&bench_runner::In::Run {
+                            framework: next_framework,
+                        });
                     } else {
                         self.frameworks = None;
+                        self.display_results();
                     }
                 }
             }
@@ -267,75 +315,23 @@ impl Component for App {
                 tx.send(&Out::StepDisabled(*is_disabled));
             }
 
-            In::SuiteCompleted(benchmark) => {
-                trace!("suite completed");
+            In::SuiteCompleted {
+                benchmark,
+                framework,
+            } => {
                 tx.send(&Out::RunDisabled(false));
                 self.benchmarks.push(benchmark.clone());
+
+                if let Some(card_gizmo) = self.find_framework_card_by_name(&framework.name) {
+                    let card_state = if let Some(msg) = benchmark.failed_message.as_ref() {
+                        FrameworkState::Erred(msg.clone())
+                    } else {
+                        FrameworkState::Done
+                    };
+                    card_gizmo.update(&framework_card::In::ChangeState(card_state));
+                }
+
                 sub.send_async(async { In::RunNext });
-                //let component_card = self.get_current_framework().expect("no current framework");
-                //let card_state = if let Some(msg) = benchmark.failed_message.as_ref() {
-                //    FrameworkState::Erred(msg.clone())
-                //} else {
-                //    FrameworkState::Done
-                //};
-                //component_card.update(&framework_card::In::ChangeState(card_state));
-
-                //let may_framework = if let Some(framework) = self.get_next_framework() {
-                //    framework.update(&framework_card::In::ChangeState(FrameworkState::Running));
-                //    Some(framework.with_state(|f| f.clone()))
-                //} else {
-                //    None
-                //};
-
-                //if let Some(framework) = may_framework {
-                //    self.bench_runner.update(&bench_runner::In::InitBench {
-                //        url: framework.url.clone(),
-                //        create_todo_method: framework.create_todo_method.clone(),
-                //        name: framework.name.clone(),
-                //        language: framework.framework_attribute("language").clone(),
-                //    });
-                //    tx.send(&Out::RunningFramework(
-                //        framework.name.clone(),
-                //        (self.current_run, self.avg_times),
-                //    ));
-                //    if !self.is_stepping {
-                //        self.bench_runner.update(&bench_runner::In::Step);
-                //    }
-                //} else {
-                //    // If we have some more bench runs to average, do them!
-                //    if self.current_run < self.avg_times {
-                //        self.current_run += 1;
-                //        sub.send_async(async { In::ClickedRun });
-                //    } else {
-                //        self.current_run = 1;
-
-                //        let benchmarks = self.benchmarks.clone();
-                //        // Write the benchmarks to local storage if possible
-                //        let _ = store::write_items(&benchmarks);
-                //        // Graph them
-                //        let graph = graph::graph_benchmarks(&benchmarks);
-
-                //        self.bench_runner
-                //            .parent_node()
-                //            .into_iter()
-                //            .for_each(|parent| {
-                //                let _ = parent.remove_child(&self.bench_runner);
-                //            });
-
-                //        let container = self.container.as_ref().expect("no container!");
-                //        let _ = container.append_child(&graph);
-
-                //        self.graph = Some(graph);
-
-                //        self.benchmarks = vec![];
-
-                //        tx.send(&Out::RunningFramework(
-                //            "".into(),
-                //            (self.current_run, self.avg_times),
-                //        ));
-                //        trace!("done.");
-                //    }
-                //}
             }
 
             In::CompletionToggleInput(el) => {
@@ -373,7 +369,7 @@ impl Component for App {
                             {(
                                 "",
                                 rx.branch_filter_map(|msg| match msg {
-                                    Out::RunningFramework(name, _) => Some(name.clone()),
+                                    Out::RunningFramework{name, ..} => Some(name.clone()),
                                     _ => None,
                                 })
                             )}
@@ -384,8 +380,8 @@ impl Component for App {
                             {(
                                 "",
                                 rx.branch_filter_map(|msg| match msg {
-                                    Out::RunningFramework(_, (n, of)) => {
-                                        Some(format!("run #{} of {}", n, of))
+                                    Out::RunningFramework{remaining, ..} => {
+                                        Some(format!("{} remaining", remaining))
                                     }
                                     _ => None,
                                 })
@@ -401,13 +397,6 @@ impl Component for App {
                             type="text"
                             class="form-control"
                             placeholder="1"
-                            //.rx_value(
-                            //    "",
-                            //    rx.branch_filter_map(|msg| match msg {
-                            //        Out::SetAvgTimesValue(val) => Some(val.clone()),
-                            //        _ => None,
-                            //    }),
-                            //)
                             on:change = tx.contra_map(|event: &Event| {
                                 In::AvgOverTimesChange(event.clone())
                             })

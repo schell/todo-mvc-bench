@@ -36,3 +36,4 @@ jobs:
         tag=`basename ${{ github.ref }}`
         create_release schell todo-mvc-bench ${{ secrets.GITHUB_TOKEN }} $tag || exit 1
         upload_release_file ${{ secrets.GITHUB_TOKEN }} release.tar.gz release.tar.gz
+        sync_release

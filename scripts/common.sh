@@ -105,9 +105,3 @@ upload_release_file() {
         return 1
     fi
 }
-
-
-sync_release() {
-    cd release/
-    aws s3 sync deploy s3://zyghost.com/projects/todo-mvc-bench
-}

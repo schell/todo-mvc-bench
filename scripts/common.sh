@@ -3,6 +3,7 @@
 export PATH=$PATH:$HOME/.cargo/bin
 
 
+# rustup
 if hash rustup 2>/dev/null; then
     echo "Have rustup, skipping installation..."
 else
@@ -11,11 +12,25 @@ else
 fi
 
 
+# wasm-pack
 if hash wasm-pack 2>/dev/null; then
     echo "Have wasm-pack, skipping installation..."
 else
     echo "Installing wasm-pack..."
     curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+fi
+
+
+# aws cli
+if hash aws 2>/dev/null; then
+    echo "Have aws cli, skipping installation..."
+else
+    echo "Installing aws cli..."
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    unzip awscliv2.zip
+    sudo ./aws/install
+    echo "Installed aws into:"
+    which aws
 fi
 
 

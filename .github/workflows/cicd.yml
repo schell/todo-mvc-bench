@@ -41,4 +41,6 @@ jobs:
         build_release
         # create_release schell todo-mvc-bench ${{ secrets.GITHUB_TOKEN }} $tag || exit 1
         # upload_release_file ${{ secrets.GITHUB_TOKEN }} release.tar.gz release.tar.gz
-        aws s3 sync --acl public-read release s3://zyghost.com/projects/todo-mvc-bench
+        aws s3 sync release s3://zyghost.com/projects/todo-mvc-bench --acl public-read --exclude '*.wasm' --exclude '*.js'
+        aws s3 sync release s3://zyghost.com/projects/todo-mvc-bench --acl public-read --exclude '*' --include '*.wasm' --content-type="application/wasm"
+        aws s3 sync release s3://zyghost.com/projects/todo-mvc-bench --acl public-read --exclude '*' --include '*.js' --content-type="text/javascript"

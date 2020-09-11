@@ -1,5 +1,44 @@
 #! /bin/bash
 
+export PATH=$PATH:$HOME/.cargo/bin
+
+
+if hash rustup 2>/dev/null; then
+    echo "Have rustup, skipping installation..."
+else
+    echo "Installing rustup..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+fi
+
+
+if hash wasm-pack 2>/dev/null; then
+    echo "Have wasm-pack, skipping installation..."
+else
+    echo "Installing wasm-pack..."
+    curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+fi
+
+
+rustup update
+rustup default nightly
+
+
+build() {
+    wasm-pack build --target web
+}
+
+
+build_release() {
+    wasm-pack build --release --target web || exit 1
+    mkdir -p release
+    cp -R pkg index.html style.css frameworks release/
+    sleep 1
+    tar czvf release.tar.gz release || exit 1
+    sleep 1
+    ls -lah release.tar.gz
+}
+
+
 create_release() {
     user=$1
     repo=$2

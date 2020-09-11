@@ -103,12 +103,29 @@ pub enum Out {
     IsEnabled(bool),
 }
 
+
+fn toggle_btn_class(enabled: bool) -> String {
+    if enabled {
+        "btn btn-primary"
+    } else {
+        "btn btn-outline-secondary"
+    }.to_string()
+}
+
+
 impl Out {
     fn error_state_msg(&self) -> Option<Option<String>> {
         if let Out::ChangeState(FrameworkState::Erred(msg)) = self {
             Some(Some(msg.clone()))
         } else {
             None
+        }
+    }
+
+    fn toggle_button_class(&self) -> Option<String> {
+        match self {
+            Out::IsEnabled(enabled) => Some(toggle_btn_class(*enabled)),
+            _ => None
         }
     }
 }
@@ -151,18 +168,13 @@ impl Component for FrameworkCard {
         builder! {
             <tr>
                 <td>
-                    <input
-                        type="checkbox"
-                        style="cursor: pointer;"
-                        on:click = tx.contra_map(|_| In::ToggleEnabled)
-                        boolean:checked=(
-                            self.is_enabled,
-                            rx.branch_filter_map(|msg| match msg {
-                                Out::IsEnabled(is_enabled) => Some(*is_enabled),
-                                _ => None
-                            })
+                    <button
+                        class = (
+                            toggle_btn_class(self.is_enabled),
+                            rx.branch_filter_map(|msg| msg.toggle_button_class())
                         )
-                     />
+                        on:click = tx.contra_map(|_| In::ToggleEnabled)
+                    />
                 </td>
                 <td>
                     <a  class={(
@@ -258,7 +270,7 @@ pub fn all_cards() -> Vec<FrameworkCard> {
         //    CreateTodoMethod::Change,
         //),
         FrameworkCard {
-            name: "mogwai 0.3 (hydrating)".into(),
+            name: "mogwai 0.3 hydrating".into(),
             url: "frameworks/mogwai-0.3-hydrate/index.html".into(),
             attributes: vec![
                 ("language".into(), "rust".into()),
@@ -269,6 +281,32 @@ pub fn all_cards() -> Vec<FrameworkCard> {
             state: FrameworkState::Ready,
             create_todo_method: CreateTodoMethod::Change,
             wait_for_input_focus: true
+        },
+        FrameworkCard {
+            name: "mogwai 0.3 less-hydrate".into(),
+            url: "frameworks/mogwai-0.3-less-allocy-hydrate/index.html".into(),
+            attributes: vec![
+                ("language".into(), "rust".into()),
+                ("version".into(), "0.3.0".into()),
+                ("has vdom".into(), "no".into()),
+            ],
+            is_enabled: true,
+            state: FrameworkState::Ready,
+            create_todo_method: CreateTodoMethod::Change,
+            wait_for_input_focus: true
+        },
+        FrameworkCard {
+            name: "mogwai 0.3 less-fresh".into(),
+            url: "frameworks/mogwai-0.3-less-allocy-fresh/index.html".into(),
+            attributes: vec![
+                ("language".into(), "rust".into()),
+                ("version".into(), "0.3.0".into()),
+                ("has vdom".into(), "no".into()),
+            ],
+            is_enabled: true,
+            state: FrameworkState::Ready,
+            create_todo_method: CreateTodoMethod::Change,
+            wait_for_input_focus: false
         },
         FrameworkCard {
             name: "sauron".into(),

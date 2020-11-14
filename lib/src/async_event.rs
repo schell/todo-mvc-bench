@@ -1,6 +1,4 @@
-//! Provides an implementation of Future for locating a web_sys::Element by its
-//! id.
-//!
+//! Async/await until a closure returns `true`.
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};

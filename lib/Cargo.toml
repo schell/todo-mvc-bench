@@ -32,8 +32,9 @@ console_error_panic_hook = { version = "0.1.6", optional = true }
 wee_alloc = { version = "0.4.2", optional = true }
 
 [dependencies.mogwai]
-git = "https://github.com/schell/mogwai.git"
-branch = "master"
+path = "../../mogwai/crates/mogwai"
+#git = "https://github.com/schell/mogwai.git"
+#branch = "master"
 
 [dependencies.web-sys]
 version = "^0.3"

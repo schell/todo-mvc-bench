@@ -4,6 +4,8 @@ use web_sys::{SvgElement, SvgsvgElement};
 
 use super::bench_runner::{Benchmark, BenchmarkStep};
 
+const SVGNS: &'static str = "http://www.w3.org/2000/svg";
+
 fn lang_color(lang: Option<&String>) -> &str {
     let lang: Option<&str> = lang.as_ref().map(|s| s.as_str());
     match lang {
@@ -74,7 +76,7 @@ impl GraphableBenchmark {
     }
 }
 
-fn graph_entries(benchmarks: &Vec<GraphableBenchmark>) -> (Vec<View<SvgElement>>, f32) {
+fn graph_entries(benchmarks: &Vec<GraphableBenchmark>) -> (Vec<ViewBuilder<Dom>>, f32) {
     let mut max_total = 0.0;
     let mut max_name_width = 0.0;
     let font_size = 12.0;
@@ -101,21 +103,21 @@ fn graph_entries(benchmarks: &Vec<GraphableBenchmark>) -> (Vec<View<SvgElement>>
         let text_y = next_y + (lane_height / 2.0) + (font_size / 2.0);
         log::trace!("  text_width: {}, text_x: {}", text_width, text_x);
         log::trace!("  next_y: {}", next_y);
-        let text = (View::element_ns("text", "http://www.w3.org/2000/svg") as View<SvgElement>)
-            .attribute("font-family", "monospace")
-            .attribute("font-size", "12")
-            .with(View::from(&gbench.name) as View<Text>)
-            .attribute("x", &format!("{}", 0))
-            .attribute("y", &format!("{}", text_y));
+        let text = builder! {
+            <text xmlns=SVGNS font_family="monospace" font_size="12" x="0" y=format!("{}", text_y)>
+                {&gbench.name}
+            </text>
+        };
 
         let total = gbench.max_bench_len();
         let total_text_string = format!("{}ms", total.round() as u32);
-        let total_text = (View::element_ns("text", "http://www.w3.org/2000/svg")
-            as View<SvgElement>)
-            .attribute("class", "framework-text")
-            .attribute("x", &format!("{}", graph_start + font_size))
-            .attribute("y", &format!("{}", text_y))
-            .with(View::from(&total_text_string) as View<Text>);
+        let total_text = builder! {
+            <text xmlns=SVGNS class="framework-text"
+             x=format!("{}", graph_start + font_size)
+             y=format!("{}", text_y)>
+                {&total_text_string}
+            </text>
+        };
 
         let to_x_and_width = |x0: f32, x1: f32| -> (f32, f32) {
             let x_percent = x0 / max_total as f32;
@@ -128,42 +130,41 @@ fn graph_entries(benchmarks: &Vec<GraphableBenchmark>) -> (Vec<View<SvgElement>>
         next_y += lane_height;
 
         if let Some(fail_msg) = gbench.error.as_ref() {
-            let text = (View::element_ns("text", "http://www.w3.org/2000/svg") as View<SvgElement>)
-                .attribute("font-family", "monospace")
-                .attribute("font-size", "12")
-                .attribute(
-                    "x",
-                    &format!(
-                        "{}",
-                        graph_start + font_size + (total_text_string.len() as f32 * font_size)
-                    ),
-                )
-                .attribute("y", &format!("{}", text_y))
-                .with(View::from(&format!("Failed: {}", fail_msg)) as View<Text>);
+            let text_x = format!(
+                "{}",
+                graph_start + font_size + (total_text_string.len() as f32 * font_size)
+            );
+            let text = builder! {
+                <text xmlns=SVGNS font_family="monospace" font_size="12" x=text_x y=format!("{}", text_y)>
+                    {format!("Failed: {}", fail_msg)}
+                </text>
+            };
             tags.push(text);
         } else {
             let (_, rect_width) = to_x_and_width(0.0, total as f32);
-            let rect = (View::element_ns("rect", "http://www.w3.org/2000/svg") as View<SvgElement>)
-                .attribute("x", &format!("{}", 0))
-                .attribute("y", &format!("{}", next_y + local_bar_y))
-                .attribute("rx", &format!("{}", bar_height / 2.0))
-                .attribute("width", &format!("{}", rect_width))
-                .attribute("height", &format!("{}", bar_height))
-                .attribute("fill", lang_color(gbench.language.as_ref()))
-                .attribute("opacity", "0.4")
-                .with(
-                    (View::element_ns("title", "http://www.w3.org/2000/svg") as View<SvgElement>)
-                        .with(
-                            View::from(&format!("total bench time - {}ms", total.round() as u32))
-                                as View<Text>,
-                        ),
-                );
+            let rect = builder! {
+                <rect xmlns=SVGNS
+                 x=format!("{}", 0)
+                 y=format!("{}", next_y + local_bar_y)
+                 r=format!("{}", bar_height / 2.0)
+                 width=format!("{}", rect_width)
+                 height=format!("{}", bar_height)
+                 fill=lang_color(gbench.language.as_ref())
+                 opacity="0.4">
+
+                    <title xmlns=SVGNS>
+                        {format!("total bench time - {}ms", total.round() as u32)}
+                    </title>
+
+                </rect>
+            };
             tags.push(rect);
 
             for datum in gbench.data.iter() {
                 assert!(
                     datum.points.len() > 0,
-                    format!("no points in datum '{}'", datum.name)
+                    "no points in datum '{}'",
+                    datum.name
                 );
 
                 let (min, max) = datum.points.iter().fold(
@@ -180,28 +181,30 @@ fn graph_entries(benchmarks: &Vec<GraphableBenchmark>) -> (Vec<View<SvgElement>>
                     x,
                     width
                 );
-                let event_bar = (View::element_ns("rect", "http://www.w3.org/2000/svg")
-                    as View<SvgElement>)
-                    .attribute("x", &format!("{}", x))
-                    .attribute("y", &format!("{}", next_y + 1.0))
-                    .attribute("width", &format!("{}", width))
-                    .attribute("height", &format!("{}", bar_height))
-                    .attribute("rx", &format!("{}", bar_height / 2.0))
-                    .attribute("fill", lang_color(gbench.language.as_ref()))
-                    .attribute("stroke", "white")
-                    .attribute("opacity", "0.6")
-                    .attribute("style", "cursor: pointer;")
-                    .with(
-                        (View::element_ns("title", "http://www.w3.org/2000/svg")
-                            as View<SvgElement>)
-                            .with(View::from(&format!(
+                let event_bar = builder! {
+                    <rect xmlns=SVGNS
+                     x=format!("{}", x)
+                     y=format!("{}", next_y + 1.0)
+                     width=format!("{}", width)
+                     height=format!("{}", bar_height)
+                     rx=format!("{}", bar_height / 2.0)
+                     fill=lang_color(gbench.language.as_ref())
+                     stroke="white"
+                     opacity="0.6"
+                     style="cursor: pointer;">
+
+                        <title xmlns=SVGNS>
+                            {format!(
                                 "{} took {}ms ({} to {})",
                                 datum.name,
                                 (end - start).round() as u32,
                                 start.round() as u32,
                                 end.round() as u32
-                            )) as View<Text>),
-                    );
+                            )}
+                        </title>
+
+                    </rect>
+                };
                 tags.push(event_bar);
             }
             next_y += bar_height;
@@ -239,7 +242,7 @@ fn process_benchmarks(benchmarks: &Vec<Benchmark>) -> Vec<GraphableBenchmark> {
     bench_map.into_iter().map(|(_, v)| v).collect()
 }
 
-pub fn graph_benchmarks(benchmarks: &Vec<Benchmark>) -> View<SvgsvgElement> {
+pub fn graph_benchmarks(benchmarks: &Vec<Benchmark>) -> ViewBuilder<Dom> {
     let mut benchmarks = process_benchmarks(benchmarks);
     benchmarks.sort_by(|bencha, benchb| {
         let a = bencha.max_bench_len().round() as u32;
@@ -256,15 +259,16 @@ pub fn graph_benchmarks(benchmarks: &Vec<Benchmark>) -> View<SvgsvgElement> {
 
     let (entries, height) = graph_entries(&benchmarks);
     let height = height + 10.0;
-    let mut graph = (View::element_ns("svg", "http://www.w3.org/2000/svg") as View<SvgsvgElement>)
-        .attribute("width", "960")
-        .attribute("height", &format!("{}", height))
-        .attribute("viewBox", &format!("0 0 960 {}", height))
-        .attribute("class", "embed-responsive-item");
-    for entry in entries.into_iter() {
-        graph = graph.with(entry);
-    }
+    let graph = builder!{
+        <svg xmlns=SVGNS
+         width="960"
+         height=format!("{}", height)
+         viewBox=format!("0 0 960 {}", height)
+         class="embed-responsive-item">
 
+            {entries}
+
+        </svg>
+    };
     graph
-    //graph.downcast().map_err(|_| ()).unwrap_throw()
 }

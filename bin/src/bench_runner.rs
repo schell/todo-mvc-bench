@@ -2,6 +2,7 @@ use log::{error, trace};
 use mogwai::{
     event::{event_stream, event_stream_with},
     prelude::*,
+    time::wait_secs,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
@@ -12,6 +13,30 @@ use todo_mvc_bench_lib::{wait_for, wait_until_next_for, wait_while, Found};
 use crate::framework_card::CreateTodoMethod;
 
 use super::framework_card::FrameworkCard;
+
+/// Return the first selector in a series that returns a value.
+fn query_selector(document: &Dom, selectors: &[&str]) -> Option<Dom> {
+    let doc = document.clone_as::<Document>().unwrap();
+    for selector in selectors {
+        let sel = doc.query_selector(selector).unwrap();
+        if let Some(el) = sel {
+            return Some(Dom::try_from(JsValue::from(el)).unwrap());
+        }
+    }
+    None
+}
+
+/// Return a vector of the elements of a selected nodelist.
+fn query_selector_all(document: &Dom, selector: &str) -> Vec<Dom> {
+    let doc = document.clone_as::<Document>().unwrap();
+    let list = doc.query_selector_all(selector).unwrap();
+    let mut out = vec![];
+    for i in 0..list.length() {
+        let el = list.get(i).unwrap();
+        out.push(Dom::try_from(JsValue::from(el)).unwrap());
+    }
+    out
+}
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
 // allocator.
@@ -116,24 +141,11 @@ async fn find_todo_input(
         end: None,
         cycles: None,
     };
+    let doc = document.clone();
     let Found {
         found: todo_input, ..
     } = wait_for(5.0, move || {
-        let doc = document.clone_as::<Document>().unwrap();
-        let el = if let Some(new_todo) = doc.query_selector("#new-todo").ok()? {
-            trace!("found #new-todo");
-            Some(new_todo)
-        } else {
-            if let Some(new_todo) = doc.query_selector(".new-todo").ok()? {
-                trace!("found .new-todo");
-                Some(new_todo)
-            } else {
-                trace!("can't find #new-todo nor .new-todo");
-                None
-            }
-        }?;
-
-        Some(Dom::try_from(JsValue::from(el)).unwrap())
+        query_selector(&doc, &["#new-todo", ".new-todo"])
     })
     .await
     .map_err(|_| "todo input not found".to_string())?;
@@ -166,12 +178,7 @@ async fn create_todos(
     create_todo_method: CreateTodoMethod,
     perf_now: impl Fn() -> f64,
 ) -> Result<BenchmarkStep, String> {
-    let len = document
-        .clone_as::<Document>()
-        .unwrap()
-        .query_selector_all(".toggle")
-        .map_err(|_| "could not query DOM with selector")
-        .map(|list| list.length())?;
+    let len = query_selector_all(&document, ".toggle").len();
     if len > 0 {
         return Err("pre-existing todos".into());
     }
@@ -184,13 +191,7 @@ async fn create_todos(
     };
     let mut created: u32 = 0;
     while created < 100 {
-        let len = document
-            .clone_as::<Document>()
-            .unwrap()
-            .query_selector_all(".toggle")
-            .map_err(|_| "could not query DOM with selector")
-            .map(|list| list.length())?;
-
+        let len = query_selector_all(&document, ".toggle").len();
         if len > 100 {
             return Err("created too many todos".into());
         }
@@ -209,19 +210,9 @@ async fn create_todos(
         );
 
         let document = document.clone();
-        let _ = wait_for(1.0, move || {
-            let new_length = document
-                .clone_as::<Document>()
-                .unwrap()
-                .query_selector_all(".toggle")
-                .ok()
-                .map(|list| list.length());
-            if let Some(new_len) = new_length {
-                if len + 1 == new_len {
-                    return Some(());
-                }
-            }
-            None
+        let _ = wait_while(1.0, move || {
+            let new_length = query_selector_all(&document, ".toggle").len();
+            len + 1 != new_length
         })
         .await
         .map_err(|e| format!("timed out waiting for todo creation for {} seconds", e))?;
@@ -241,30 +232,15 @@ async fn complete_todos(
         end: None,
         cycles: None,
     };
+    let doc = document.clone();
     let Found { found: toggles, .. } = wait_for(5.0, move || -> Option<Vec<Dom>> {
-        document
-            .clone_as::<Document>()
-            .unwrap()
-            .query_selector_all(".toggle")
-            .ok()
-            .map(|list| -> Option<Vec<Dom>> {
-                if list.length() != 100 {
-                    trace!("list size: {}", list.length());
-                    return None;
-                }
-
-                let mut elements = vec![];
-                for i in 0..list.length() {
-                    if let Some(element) = list.get(i) {
-                        let dom = Dom::try_from(JsValue::from(element)).unwrap();
-                        elements.push(dom);
-                    } else {
-                        return None;
-                    }
-                }
-                Some(elements)
-            })
-            .flatten()
+        let elements = query_selector_all(&doc, ".toggle");
+        if elements.len() != 100 {
+            trace!("list size: {}", elements.len());
+            None
+        } else {
+            Some(elements)
+        }
     })
     .await
     .map_err(|_| "todos could not be found to complete".to_string())?;
@@ -275,6 +251,17 @@ async fn complete_todos(
             .unwrap()
             .click();
     }
+
+    let Found { .. } = wait_while(5.0, move || {
+        query_selector(&document, &["#clear-completed", ".clear-completed"]).is_none()
+    })
+    .await
+    .map_err(|elapsed| {
+        format!(
+            "timed out waiting {}s for the complete button to appear",
+            elapsed
+        )
+    })?;
     complete_todos_step.end = Some(perf_now());
     Ok(complete_todos_step)
 }
@@ -287,19 +274,9 @@ async fn delete_todos(document: Dom, perf_now: impl Fn() -> f64) -> Result<Bench
     //
     // First assert that our list is 100 elements
     let doc = document.clone();
-    let Found { .. } = wait_for(1.0, move || {
-        doc.clone_as::<Document>()
-            .unwrap()
-            .query_selector_all(".destroy")
-            .ok()
-            .map(|list| {
-                if list.length() == 100 {
-                    Some(())
-                } else {
-                    trace!("len: {}", list.length());
-                    None
-                }
-            })
+    let Found { .. } = wait_while(1.0, move || {
+        let toggles = query_selector_all(&doc, ".destroy");
+        toggles.len() != 100
     })
     .await
     .map_err(|_| "could not confirm destroy toggles exist".to_string())?;
@@ -310,17 +287,13 @@ async fn delete_todos(document: Dom, perf_now: impl Fn() -> f64) -> Result<Bench
         end: None,
         cycles: None,
     };
-    let start_destruction = perf_now();
     let mut deletions_remaining = 100;
+    let manual_delete_len = 10;
     'destroy_todos: loop {
         trace!("  {}", deletions_remaining);
-        let el_dom = {
-            let list = document
-                .clone_as::<Document>()
-                .unwrap()
-                .query_selector_all(".destroy")
-                .map_err(|_| "could not get .destroy nodelist".to_string())?;
-            if list.length() != deletions_remaining {
+        {
+            let list = query_selector_all(&document, ".destroy");
+            if list.len() != deletions_remaining {
                 // We are still waiting for the previous one to have disappeared
                 return Err(format!(
                     "unexpected number of todos: {}",
@@ -328,45 +301,61 @@ async fn delete_todos(document: Dom, perf_now: impl Fn() -> f64) -> Result<Bench
                 ));
             }
 
-            let el: HtmlElement = list.get(0)
+            let el: HtmlElement = list.first()
                 .ok_or_else(|| "no destroy button to click".to_string())?
-                .dyn_into::<HtmlElement>()
-                .map_err(|_| "destroy button is not an HtmlElement".to_string())?;
+                .clone_as::<HtmlElement>()
+                .ok_or_else(|| "destroy button is not an HtmlElement".to_string())?;
             el.click();
-            Dom::try_from(JsValue::from(el)).unwrap()
-        };
+        }
 
         deletions_remaining -= 1;
 
         let doc = document.clone();
         let Found { .. } = wait_while(5.0, move || {
-            let list = doc.clone_as::<Document>()
-                .unwrap()
-                .query_selector_all(".destroy")
-                .unwrap();
-            list.length() != deletions_remaining
+            let list = query_selector_all(&doc, ".destroy");
+            list.len() != deletions_remaining
         })
         .await
         .map_err(|elapsed| format!("couldn't confirm todo deleted after {} seconds", elapsed))?;
 
-        if deletions_remaining == 0 {
+        if deletions_remaining <= 100 - manual_delete_len {
             break 'destroy_todos;
         }
     }
-    {
-        let num_destroy_toggles = document
-            .clone_as::<Document>()
-            .unwrap()
-            .query_selector_all(".destroy")
-            .map(|list: web_sys::NodeList| list.length())
-            .map_err(|_| "couldn't get destroy toggle nodelist to confirm deletion".to_string())?;
 
-        if num_destroy_toggles > 0 {
-            return Err(format!("there are {} remaining todos", num_destroy_toggles));
-        }
+    let _ = wait_secs(0.5).await;
+    clear_completed_todos(document.clone()).await?;
+
+    let num_destroy_toggles = query_selector_all(&document, ".destroy").len();
+    if num_destroy_toggles > 0 {
+        return Err(format!("there are {} remaining todos", num_destroy_toggles));
     }
+
     delete_todos_step.end = Some(perf_now());
     Ok(delete_todos_step)
+}
+
+async fn clear_completed_todos(document: Dom) -> Result<(), String> {
+    if let Some(clear_button) = query_selector(&document, &["#clear-completed", ".clear-completed"]) {
+        clear_button
+            .clone_as::<HtmlElement>()
+            .ok_or_else(|| "clear completed todos button is not an element".to_string())?
+            .click();
+
+        let Found { .. } = wait_while(5.0, move || query_selector_all(&document, ".destroy").len() > 0)
+        .await
+        .map_err(|elapsed| format!("timed out ({}s) while clearing existing todos", elapsed))?;
+    } else {
+        let num_todos = query_selector_all(&document, ".destroy").len();
+        if num_todos > 0 {
+            log::error!(
+                "there are {} todos but no clear completed button",
+                num_todos
+            );
+        }
+    }
+
+    Ok(())
 }
 
 async fn execute_bench(
@@ -384,10 +373,10 @@ async fn execute_bench(
 
     // Load the iframe source
     trace!("{} waiting for iframe load complete", src);
+
     let some_steps = load_step(iframe.clone(), tx, src, perf_now.clone()).await?;
     steps.push(some_steps);
     trace!("  load complete");
-
     let document = iframe
         .visit_as(
             |iframe: &HtmlIFrameElement| {
@@ -410,6 +399,8 @@ async fn execute_bench(
     }
 
     trace!("creating todos");
+    clear_completed_todos(document.clone()).await?;
+
     steps.push(
         create_todos(
             document.clone(),

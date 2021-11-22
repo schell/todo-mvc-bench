@@ -156,12 +156,12 @@ async fn app_logic(
     let toggle_all_input = tx_input.recv().await.unwrap();
     let container_dom = tx_container.recv().await.unwrap();
 
-    //// now that we have the test and results container, we can try to read
-    //// any previous benchmarks and show them here.
-    //if let Ok(benchmarks) = store::read_benchmarks() {
-    //    let graph = graph::graph_benchmarks(&benchmarks);
-    //    container_dom.patch_children(ListPatch::push(graph));
-    //}
+    // now that we have the test and results container, we can try to read
+    // any previous benchmarks and show them here.
+    if let Ok(benchmarks) = store::read_benchmarks() {
+        let graph = Component::from(graph::graph_benchmarks(&benchmarks)).build().unwrap();
+        container_dom.patch_children(ListPatch::push(graph.into_inner())).unwrap();
+    }
 
     while let Some(msg) = rx_logic.next().await {
         match msg {

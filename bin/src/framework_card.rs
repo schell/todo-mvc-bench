@@ -313,7 +313,7 @@ pub fn all_cards() -> Vec<FrameworkCard> {
             ],
             is_enabled: true,
             state: FrameworkState::Ready,
-            create_todo_method: CreateTodoMethod::InputAndKeypress,
+            create_todo_method: CreateTodoMethod::Change,
             wait_for_input_focus: false,
         },
         FrameworkCard {
@@ -326,7 +326,7 @@ pub fn all_cards() -> Vec<FrameworkCard> {
             ],
             is_enabled: true,
             state: FrameworkState::Ready,
-            create_todo_method: CreateTodoMethod::InputAndKeypress,
+            create_todo_method: CreateTodoMethod::Change,
             wait_for_input_focus: false,
         },
         FrameworkCard {

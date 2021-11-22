@@ -9,6 +9,7 @@
     "todomvc.js",
     "todomvc.d.ts"
   ],
-  "browser": "todomvc.js",
-  "types": "todomvc.d.ts"
+  "module": "todomvc.js",
+  "types": "todomvc.d.ts",
+  "sideEffects": false
 }
